@@ -87,7 +87,7 @@ function buildIndex(model: ParsedModel): void {
       geo.setAttribute('position', new BufferAttribute(tri.pos, 3));
       const bvh = new MeshBVH(geo, {
         indirect: true,
-        maxLeafSize: 12,
+        targetLeafSize: 12,
         onProgress: (p: number) => {
           const now = Date.now();
           if (now - lastReport > 80) {
@@ -97,7 +97,7 @@ function buildIndex(model: ParsedModel): void {
         },
       });
       const s = MeshBVH.serialize(bvh, { cloneBuffers: false });
-      tri.bvh = { roots: s.roots, indirect: s.indirectBuffer };
+      tri.bvh = { version: (s as unknown as { version?: number }).version ?? 1, roots: s.roots, indirect: s.indirectBuffer };
     } catch {
       // Without an index picking still works, only slower.
       tri.bvh = null;

@@ -280,7 +280,7 @@ export class Viewer {
       const g = geometry(l.tri.pos, l.tri.col);
       if (l.tri.bvh) {
         try {
-          const data = { roots: l.tri.bvh.roots, index: null, indirectBuffer: l.tri.bvh.indirect } as unknown as SerializedBVH;
+          const data = { version: l.tri.bvh.version, roots: l.tri.bvh.roots, index: null, indirectBuffer: l.tri.bvh.indirect } as unknown as SerializedBVH;
           g.boundsTree = MeshBVH.deserialize(data, g, { setIndex: false });
         } catch {
           g.boundsTree = undefined;

@@ -70,6 +70,8 @@ export interface Diagnostics {
 }
 
 export interface SerializedBvh {
+  /** Format version written by three-mesh-bvh; must be passed back unchanged. */
+  version: number;
   roots: ArrayBuffer[];
   indirect: Uint32Array | Uint16Array | null;
 }

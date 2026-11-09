@@ -48,10 +48,12 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
   e.respondWith(
     caches.open(CACHE).then(async (c) => {
-      const hit = await c.match(req, { ignoreSearch: true });
+      // ignoreVary: static hosts often send "Vary: Origin", which would make the
+      // precached copy miss for <script crossorigin> requests.
+      const hit = await c.match(req, { ignoreSearch: true, ignoreVary: true });
       if (hit) return hit;
       if (req.mode === 'navigate') {
-        const shell = await c.match('./');
+        const shell = await c.match('./', { ignoreVary: true });
         if (shell) return shell;
       }
       return fetch(req);

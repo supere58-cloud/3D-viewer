@@ -22,16 +22,16 @@ const check = (ok, what) => { console.log((ok ? '  ok   ' : '  FAIL ') + what); 
 
 async function run(label, contextOptions, body) {
   console.log(label);
-  const context = await browser.newContext({ ...contextOptions, serviceWorkers: 'block' });
+  const context = await browser.newContext({ serviceWorkers: 'block', ...contextOptions });
   const page = await context.newPage();
   const errors = [], foreign = [];
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  page.on('console', (m) => { if ((m.type() === 'error' || m.type() === 'warning') && !/blocked by Playwright|example\.com/.test(m.text())) errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push(String(e)));
-  page.on('request', (r) => { if (!r.url().startsWith(base) && !r.url().startsWith('data:') && !r.url().startsWith('blob:')) foreign.push(r.url()); });
+  page.on('request', (r) => { if (!r.url().startsWith(base) && !r.url().includes('example.com') && !r.url().startsWith('data:') && !r.url().startsWith('blob:')) foreign.push(r.url()); });
   await page.goto(base);
   await page.waitForSelector('.toolbar .tool');
   await body(page);
-  check(errors.length === 0, `no console errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
+  check(errors.length === 0, `no console errors or warnings${errors.length ? ': ' + errors.join(' | ') : ''}`);
   check(foreign.length === 0, `no requests outside the app${foreign.length ? ': ' + foreign.join(', ') : ''}`);
   await context.close();
 }
@@ -69,6 +69,22 @@ await run('phone, portrait', { ...devices['Pixel 7'] }, async (page) => {
   await page.screenshot({ path: path.join(outDir, 'phone-measure.png') });
   const cells = await page.locator('.measure .m-cell').count();
   check(cells === 5, 'second tap shows 3D / horizontal / vertical / azimuth / dip');
+
+  // Surfaces are picked through the BVH and hide what lies behind them.
+  const surf = await page.evaluate(() => {
+    const v = window.__app.viewer, f = v.files[0];
+    const saved = { ...v.rig.state, target: v.rig.state.target.clone() };
+    v.rig.state.heading = 0; v.rig.state.tilt = Math.PI / 2;
+    const hit = v.pick(v.rig.width / 2 + 3, v.rig.height / 2 + 3, false);
+    f.layers.forEach((l) => { if (l.name !== 'Карьер') l.visible = false; });
+    const only = v.pick(v.rig.width * 0.3, v.rig.height / 2, true);
+    f.layers.forEach((l) => { l.visible = true; });
+    Object.assign(v.rig.state, saved);
+    return { hit, only, indexed: f.layers.every((l) => !l.mesh || !!l.mesh.geometry.boundsTree) };
+  });
+  check(surf.indexed, 'every mesh layer has a BVH');
+  check(surf.only && surf.only.layer === 'Карьер' && surf.only.point[2] > 100 && surf.only.point[2] < 450, `surface pick returns a point on the pit: ${JSON.stringify(surf.only?.point.map((n) => +n.toFixed(2)))} (${surf.only?.kind})`);
+  check(surf.hit && surf.hit.layer !== 'Скважины', `drillholes under the pit floor are not picked through it (got "${surf.hit?.layer}")`);
 
   // One-finger orbit changes heading; pinch changes distance.
   const before = await page.evaluate(() => ({ ...window.__app.viewer.rig.state, target: null }));
@@ -151,6 +167,26 @@ await run('tablet, landscape, several files', { ...devices['iPad (gen 7) landsca
   await page.waitForTimeout(400);
   await page.screenshot({ path: path.join(outDir, 'tablet-plan-ortho.png') });
   check(await page.evaluate(() => window.__app.viewer.rig.ortho), 'orthographic toggle');
+});
+
+await run('installed PWA, offline', { ...devices['Pixel 7'], serviceWorkers: 'allow' }, async (page) => {
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await page.waitForFunction(async () => (await caches.keys()).length > 0 && navigator.serviceWorker.controller !== null, null, { timeout: 20000 }).catch(() => undefined);
+  await page.context().setOffline(true);
+  await page.reload();
+  await page.waitForSelector('.toolbar .tool', { timeout: 15000 });
+  check(true, 'app shell starts with the network switched off');
+  await openFiles(page, [sample]);
+  check(await page.evaluate(() => window.__app.viewer.files.length === 1), 'a model opens while offline (worker served from the cache)');
+  const csp = await page.evaluate(() => fetch('https://example.com/').then(() => 'allowed', () => 'blocked'));
+  check(csp === 'blocked', 'fetch() to the outside is refused');
+  await page.context().setOffline(false);
+  const csp2 = await page.evaluate(() => new Promise((res) => {
+    document.addEventListener('securitypolicyviolation', (e) => res(e.violatedDirective), { once: true });
+    fetch('https://example.com/').catch(() => undefined);
+    setTimeout(() => res('no violation event'), 2000);
+  }));
+  check(String(csp2).startsWith('connect-src'), `with the network on, the CSP blocks it (${csp2})`);
 });
 
 await browser.close();
