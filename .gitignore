@@ -24,3 +24,4 @@ ios/DerivedData/
 xcuserdata/
 # generated locally, too large for git
 tests/fixtures/big/
+e2e-out/

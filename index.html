@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <!-- The Content-Security-Policy meta tag is injected here by the production build (vite.config.ts). -->
+    <meta name="referrer" content="no-referrer" />
+    <meta name="theme-color" content="#0b0e12" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Mine Viewer" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+    <title>Mine Viewer</title>
+  </head>
+  <body>
+    <div id="app">
+      <!-- Shown until the script starts, and left in place if it cannot. -->
+      <div id="boot" class="boot">
+        <p>Загрузка… / Loading…</p>
+        <noscript><p>Для работы нужен JavaScript. / JavaScript is required.</p></noscript>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

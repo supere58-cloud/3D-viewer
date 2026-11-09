@@ -1,5 +1,8 @@
 import { defineConfig, type Plugin } from 'vite';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string };
 
 /**
  * Emits sw.js with a precache list of every file in the build, so the PWA
@@ -61,14 +64,47 @@ self.addEventListener('fetch', (e) => {
   };
 }
 
+/**
+ * No network at runtime. connect-src 'none' blocks fetch / XHR / WebSocket /
+ * EventSource / sendBeacon; default-src 'none' blocks everything not listed.
+ * File bytes come from the file picker or the native bridge, never over HTTP.
+ * Only applied to production builds: the dev server needs inline styles and
+ * a WebSocket for hot reload.
+ */
+export const CSP = [
+  "default-src 'none'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "img-src 'self' data: blob:",
+  "font-src 'self'",
+  "worker-src 'self'",
+  "manifest-src 'self'",
+  "connect-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "object-src 'none'",
+].join('; ');
+
+function strictCsp(): Plugin {
+  return {
+    name: 'strict-csp',
+    apply: 'build',
+    transformIndexHtml: {
+      order: 'post',
+      handler: () => [{ tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy', content: CSP }, injectTo: 'head-prepend' }],
+    },
+  };
+}
+
 export default defineConfig({
   base: './',
+  define: { __APP_VERSION__: JSON.stringify(pkg.version) },
   build: {
     target: ['chrome80', 'safari15'],
     chunkSizeWarningLimit: 1200,
   },
   worker: { format: 'es' },
-  plugins: [offlineServiceWorker()],
+  plugins: [strictCsp(), offlineServiceWorker()],
   test: {
     include: ['tests/**/*.test.ts'],
     environment: 'node',

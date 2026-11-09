@@ -1,0 +1,28 @@
+{
+  "name": "Mine Viewer",
+  "short_name": "Mine Viewer",
+  "description": "Offline 3D viewer for mine models: DXF, GLB, OBJ, STL",
+  "lang": "ru",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b0e12",
+  "theme_color": "#0b0e12",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "file_handlers": [
+    {
+      "action": "./",
+      "accept": {
+        "application/dxf": [".dxf"],
+        "model/gltf-binary": [".glb"],
+        "model/obj": [".obj"],
+        "model/stl": [".stl"]
+      }
+    }
+  ]
+}
