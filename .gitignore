@@ -1,0 +1,26 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+# Capacitor copies of the web build
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+android/app/src/main/res/xml/config.xml
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/capacitor-cordova-android-plugins/
+android/keystore.properties
+*.jks
+*.keystore
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+ios/App/App/config.xml
+ios/App/Pods/
+ios/App/build/
+ios/DerivedData/
+xcuserdata/
+# generated locally, too large for git
+tests/fixtures/big/

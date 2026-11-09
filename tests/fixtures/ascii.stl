@@ -1,0 +1,9 @@
+solid stope
+ facet normal 0 0 1
+  outer loop
+   vertex 654321.5 7654321.25 10
+   vertex 654322.5 7654321.25 10
+   vertex 654322.5 7654322.25 10.5
+  endloop
+ endfacet
+endsolid stope
