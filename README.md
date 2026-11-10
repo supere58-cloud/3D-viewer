@@ -11,9 +11,9 @@ requests at all.
 - UI in Russian (default) and English.
 
 > **Status.** Everything below was built and tested in a Linux container with
-> headless Chromium. It has **not** been run on a physical phone or tablet, the
-> Android and iOS projects have **not** been compiled, and the parser has only
-> seen synthetic DXF. Read [What was not verified](#what-was-not-verified)
+> headless Chromium. The debug APK compiles in CI, but the app has **not** been
+> run on a physical phone or tablet, the iOS project has **not** been compiled,
+> and the parser has only seen synthetic DXF. Read [What was not verified](#what-was-not-verified)
 > before relying on it in the field.
 
 ## Contents
@@ -293,10 +293,9 @@ first contact with real hardware and real data.
   triggered for real.
 
 **Android**
-- `android/` was never compiled: the container cannot download the Android SDK.
-  The custom Java plugin was type-checked against the Android 14 API with
-  stand-in Capacitor classes, which is weaker than a real build. The GitHub
-  Actions workflow is the first real compile.
+- The debug APK **does compile**: the GitHub Actions workflow built it on the
+  first push. It was never installed or launched, and the signed release build
+  (`assembleRelease` / `bundleRelease`) was not run.
 - That the WebView loads the app **without the `INTERNET` permission**. This is
   expected to work because Capacitor serves assets by intercepting requests,
   but it is unproven. If the app shows a blank or error page on launch, remove
