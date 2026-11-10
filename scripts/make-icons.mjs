@@ -19,8 +19,13 @@ const svg = (pad) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 5
 const targets = [
   ['public/icons/icon-192.png', 192, 1], ['public/icons/icon-512.png', 512, 1],
   ['public/icons/icon-maskable-512.png', 512, 0.72], ['public/icons/apple-touch-icon.png', 180, 0.9],
-  ['resources/icon-1024.png', 1024, 0.9], ['resources/icon-foreground-432.png', 432, 0.6],
+  ['ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png', 1024, 0.9],
 ];
+// Android launcher icons: legacy square/round and the adaptive foreground.
+for (const [dpi, legacy, fg] of [['mdpi', 48, 108], ['hdpi', 72, 162], ['xhdpi', 96, 216], ['xxhdpi', 144, 324], ['xxxhdpi', 192, 432]]) {
+  const dir = `android/app/src/main/res/mipmap-${dpi}/`;
+  targets.push([dir + 'ic_launcher.png', legacy, 0.9], [dir + 'ic_launcher_round.png', legacy, 0.72], [dir + 'ic_launcher_foreground.png', fg, 0.5]);
+}
 const browser = await chromium.launch();
 for (const [file, size, pad] of targets) {
   const page = await browser.newPage({ viewport: { width: size, height: size }, deviceScaleFactor: 1 });

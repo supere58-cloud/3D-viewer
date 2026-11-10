@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Mine Viewer</string>
+    <string name="title_activity_main">Mine Viewer</string>
+    <string name="package_name">com.mineviewer.app</string>
+    <string name="custom_url_scheme">com.mineviewer.app</string>
+</resources>
