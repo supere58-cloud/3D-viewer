@@ -130,5 +130,6 @@
   "warn.texturesDropped": "Textures are not loaded; only geometry is shown.",
   "warn.nonFiniteCoords": "Entities with invalid coordinates were skipped.",
   "warn.recursionLimit": "Blocks are nested too deeply.",
-  "warn.farOutliers": "Some entities are far from the main model (for example near 0,0). Their coordinates are approximate; the view frames the main model."
+  "warn.farOutliers": "Some entities are far from the main model (for example near 0,0). Their coordinates are approximate; the view frames the main model.",
+  "warn.solidsSkipped": "The file has AutoCAD solids or surfaces (3DSOLID, REGION, SURFACE, MESH). They are not drawn: export them as a face wireframe (3DFACE)."
 }

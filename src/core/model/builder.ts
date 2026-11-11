@@ -18,6 +18,12 @@ const TILE = 16384; // metres
 const INV_TILE = 1 / TILE;
 /** Tiles further than this many cells from the main one are "far outliers". */
 const FOCUS_CELLS = 4;
+/** Height of the elevation bins used to find the main model's Z range, metres. */
+const ZBIN = 128;
+/** Geometry outside the main Z range is ignored for framing only if it is at most this share of the file. */
+const Z_OUTLIER_SHARE = 0.05;
+
+interface ZBin { n: number; min: number; max: number }
 
 class FloatChunks {
   private chunks: Float32Array[] = [];
@@ -141,6 +147,63 @@ export class ModelBuilder implements GeometrySink {
   private lblText: string[] = [];
   private nonFinite = 0;
   private prims = 0;
+  private zBins = new Map<number, ZBin>();
+  private lastZi = NaN;
+  private lastZBin: ZBin | null = null;
+
+  /** Elevation histogram: lets finish() tell the model from a few stray items at another level. */
+  private noteZ(z: number): void {
+    const zi = Math.floor(z / ZBIN);
+    let b = this.lastZBin;
+    if (zi !== this.lastZi || b === null) {
+      b = this.zBins.get(zi) ?? null;
+      if (!b) {
+        b = { n: 0, min: z, max: z };
+        this.zBins.set(zi, b);
+      }
+      this.lastZi = zi;
+      this.lastZBin = b;
+    }
+    b.n++;
+    if (z < b.min) b.min = z;
+    if (z > b.max) b.max = z;
+  }
+
+  /**
+   * Z range of the main model: the fullest elevation bin plus the bins joined
+   * to it without a large empty gap. Real exports often carry a few 2D items
+   * at Z = 0 next to a model that sits at 2000 m; those must not decide how the
+   * view is framed. Returns null when everything belongs together.
+   */
+  private mainZRange(): { min: number; max: number } | null {
+    let total = 0, best = NaN, bestN = 0;
+    for (const [zi, b] of this.zBins) {
+      total += b.n;
+      if (b.n > bestN) { bestN = b.n; best = zi; }
+    }
+    if (!(bestN > 0)) return null;
+    let lo = best, hi = best;
+    // One empty bin is bridged; two or more separate the groups.
+    for (;;) {
+      if (this.zBins.has(lo - 1)) lo -= 1;
+      else if (this.zBins.has(lo - 2)) lo -= 2;
+      else break;
+    }
+    for (;;) {
+      if (this.zBins.has(hi + 1)) hi += 1;
+      else if (this.zBins.has(hi + 2)) hi += 2;
+      else break;
+    }
+    let inside = 0, min = Infinity, max = -Infinity;
+    for (const [zi, b] of this.zBins) {
+      if (zi < lo || zi > hi) continue;
+      inside += b.n;
+      if (b.min < min) min = b.min;
+      if (b.max > max) max = b.max;
+    }
+    if (inside === total || total - inside > total * Z_OUTLIER_SHARE) return null;
+    return { min, max };
+  }
 
   private layerIndex(name: string): number {
     let i = this.layerOrder.get(name);
@@ -192,6 +255,7 @@ export class ModelBuilder implements GeometrySink {
     if (!this.ok(Math.abs(ax) + Math.abs(ay) + Math.abs(az) + Math.abs(bx) + Math.abs(by) + Math.abs(bz) + Math.abs(cx) + Math.abs(cy) + Math.abs(cz))) return;
     const t = this.tileAt(ax, ay, az);
     t.bound(ax, ay, az); t.bound(bx, by, bz); t.bound(cx, cy, cz);
+    this.noteZ(az); this.noteZ(bz); this.noteZ(cz);
     const b = this.acc(t, layer).tri;
     const ox = t.ox, oy = t.oy, oz = t.oz;
     b.pos.push3(ax - ox, ay - oy, az - oz);
@@ -205,6 +269,7 @@ export class ModelBuilder implements GeometrySink {
     if (!this.ok(Math.abs(ax) + Math.abs(ay) + Math.abs(az) + Math.abs(bx) + Math.abs(by) + Math.abs(bz))) return;
     const t = this.tileAt(ax, ay, az);
     t.bound(ax, ay, az); t.bound(bx, by, bz);
+    this.noteZ(az); this.noteZ(bz);
     const b = this.acc(t, layer).seg;
     b.pos.push3(ax - t.ox, ay - t.oy, az - t.oz);
     b.pos.push3(bx - t.ox, by - t.oy, bz - t.oz);
@@ -216,6 +281,7 @@ export class ModelBuilder implements GeometrySink {
     if (!this.ok(Math.abs(x) + Math.abs(y) + Math.abs(z))) return;
     const t = this.tileAt(x, y, z);
     t.bound(x, y, z);
+    this.noteZ(z);
     const b = this.acc(t, layer).pt;
     b.pos.push3(x - t.ox, y - t.oy, z - t.oz);
     b.note(color);
@@ -226,6 +292,7 @@ export class ModelBuilder implements GeometrySink {
     if (!this.ok(Math.abs(x) + Math.abs(y) + Math.abs(z))) return;
     const t = this.tileAt(x, y, z);
     t.bound(x, y, z);
+    this.noteZ(z);
     this.lblPos.push(x, y, z);
     this.lblH.push(height > 0 && height < 1e9 ? height : 0);
     this.lblLayer.push(this.layerIndex(layer));
@@ -256,6 +323,12 @@ export class ModelBuilder implements GeometrySink {
       bbox = grow(bbox, t);
       if (main && Math.abs(t.ix - main.ix) <= FOCUS_CELLS && Math.abs(t.iy - main.iy) <= FOCUS_CELLS) focus = grow(focus, t);
       else farOutliers = true;
+    }
+    const zr = this.mainZRange();
+    if (focus && zr && zr.min <= focus.max[2] && zr.max >= focus.min[2]) {
+      focus.min[2] = Math.max(focus.min[2], zr.min);
+      focus.max[2] = Math.min(focus.max[2], zr.max);
+      farOutliers = true;
     }
 
     const layers: ParsedLayer[] = [];
@@ -299,6 +372,8 @@ export class ModelBuilder implements GeometrySink {
       text: this.lblText,
     };
     this.tiles.clear();
+    this.zBins.clear();
+    this.lastZBin = null;
     this.tile = null;
     this.lastIx = NaN;
     return {

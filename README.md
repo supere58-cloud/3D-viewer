@@ -41,6 +41,11 @@ requests at all.
 
 Mouse: left drag orbits, right drag or Shift+drag pans, wheel zooms.
 
+Zoom closes in on whatever is under the fingers (or the cursor) and stops at
+it rather than running through. Started over empty space, it keeps flying
+forward instead. The view background is a neutral grey so that dark blue and
+purple layers stay visible as well as white, yellow and cyan ones.
+
 - **Open files**: the Open button (several files at once), "Open with" / Share
   from a file manager or messenger (Android and iOS apps), or drag and drop in a
   desktop browser.
@@ -319,8 +324,11 @@ first contact with real hardware and real data.
   15.2+); if it is unavailable the app still works but recents need re-picking.
 
 **Data**
-- No real Micromine export has been parsed. All DXF fixtures are synthetic,
-  written by `scripts/make-fixtures.mjs` to my reading of the DXF reference.
+- Only one real file has been tried: an AutoCAD 2018 DXF of survey strings
+  (3D polylines). No Micromine wireframe export has been parsed. All DXF
+  fixtures are synthetic, written by `scripts/make-fixtures.mjs` to my reading
+  of the DXF reference. `node scripts/inspect.mjs <file>` prints the same
+  diagnostics as the app, without a device.
   Please open a few real exports and send the Diagnostics report for any that
   look wrong or list skipped entities.
 - The original HTML prototype was not available to me (the attachment did not
@@ -342,7 +350,12 @@ first contact with real hardware and real data.
 
 - Binary DXF and DWG are not supported (binary DXF is detected and explained).
 - Polyline bulges (arc segments) are drawn straight; SPLINE, ELLIPSE, HATCH,
-  DIMENSION, 3DSOLID and MESH are skipped and counted.
+  DIMENSION, 3DSOLID and MESH are skipped and counted. AutoCAD solids
+  (3DSOLID, REGION, SURFACE) are stored as binary kernel data and cannot be
+  drawn; export them as 3DFACE wireframes.
+- A few stray items at a very different elevation (for example 2D linework at
+  Z = 0 under a model at 2000 m) are drawn but ignored when framing the view
+  and placing the grid, as long as they are under 5 % of the file.
 - DXF text is drawn as upright screen labels; rotation, justification and
   fonts are ignored. At most 500 labels are drawn at once (the largest ones).
 - GLB: geometry and base colour only; no textures, no Draco / Meshopt.

@@ -186,6 +186,34 @@ describe('DXF: large coordinates', () => {
   });
 });
 
+describe('framing ignores stray items at another elevation', () => {
+  const line = (z1: number, z2: number, x = 0) => `0\nLINE\n8\nA\n10\n${654300 + x}\n20\n7654600\n30\n${z1}\n11\n${654310 + x}\n21\n7654610\n31\n${z2}\n`;
+  const wrap = (body: string) => bytes(`0\nSECTION\n2\nENTITIES\n${body}0\nENDSEC\n0\nEOF\n`);
+  it('frames the model, not a 2D leftover at Z = 0', () => {
+    let body = line(0, 0);
+    for (let i = 0; i < 60; i++) body += line(1980 + (i % 30), 1981 + (i % 30), i);
+    const m = loadFromBytes('adit.dxf', wrap(body));
+    expect(m.diagnostics.bbox!.min[2]).toBe(0);
+    expect(m.focus!.min[2]).toBe(1980);
+    expect(m.focus!.max[2]).toBe(2010);
+    expect(m.diagnostics.warnings).toContain('farOutliers');
+  });
+  it('keeps both levels when each holds a real share of the model', () => {
+    let body = '';
+    for (let i = 0; i < 30; i++) body += line(0, 5, i) + line(1980, 1990, i);
+    const m = loadFromBytes('two-levels.dxf', wrap(body));
+    expect(m.focus!.min[2]).toBe(0);
+    expect(m.focus!.max[2]).toBe(1990);
+    expect(m.diagnostics.warnings).not.toContain('farOutliers');
+  });
+  it('treats a continuous tall model as one piece', () => {
+    let body = '';
+    for (let i = 0; i < 40; i++) body += line(i * 50, i * 50 + 50, i);
+    const m = loadFromBytes('shaft.dxf', wrap(body));
+    expect(m.focus).toEqual(m.diagnostics.bbox);
+  });
+});
+
 describe('DXF: damaged input', () => {
   it('keeps complete entities of a truncated file', () => {
     const m = load('truncated.dxf');

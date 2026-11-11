@@ -199,7 +199,7 @@ html, body {
 }
 .empty > * { pointer-events: auto; }
 .empty h1 { margin: 0; font-size: 24px; }
-.empty p { margin: 0; color: var(--muted); max-width: 420px; }
+.empty p { margin: 0; color: var(--text); max-width: 420px; }
 
 .dropping .viewport::after {
   content: "";

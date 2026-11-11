@@ -127,6 +127,8 @@ export class ModelLoader {
       skipped = { ...dxfInfo.skipped };
       malformed = dxfInfo.malformedLines;
       dxfInfo.warnings.forEach((w) => warnings.add(w));
+      // ACIS solids and surfaces are stored as opaque kernel data that cannot be drawn here.
+      if (Object.keys(skipped).some((k) => /^(3DSOLID|BODY|REGION|SURFACE|\w+SURFACE|MESH)$/.test(k))) warnings.add('solidsSkipped');
       const total = Object.keys(entities).length;
       if (total === 0 && defs.length === 0 && dxfInfo.version === null && this.builder.primitiveCount === 0) {
         // Nothing that looks like DXF was found at all.

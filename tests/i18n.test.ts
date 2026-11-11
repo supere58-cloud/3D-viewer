@@ -12,7 +12,7 @@ describe('string resources', () => {
   });
   it('has a message for every load error and warning code', () => {
     const errors = ['binaryDxf', 'utf16Dxf', 'unsupportedFormat', 'glbCompressed', 'glbInvalid', 'notDxf', 'outOfMemory', 'readFailed', 'parseFailed', 'cancelled'];
-    const warnings = ['truncated', 'noEof', 'malformedLines', 'bulgesIgnored', 'missingBlocks', 'paperSpaceSkipped', 'badFaces', 'texturesDropped', 'nonFiniteCoords', 'recursionLimit', 'farOutliers'];
+    const warnings = ['truncated', 'noEof', 'malformedLines', 'bulgesIgnored', 'missingBlocks', 'paperSpaceSkipped', 'badFaces', 'texturesDropped', 'nonFiniteCoords', 'recursionLimit', 'farOutliers', 'solidsSkipped'];
     for (const e of errors) expect(ru, e).toHaveProperty('err.' + e);
     for (const w of warnings) expect(ru, w).toHaveProperty('warn.' + w);
   });

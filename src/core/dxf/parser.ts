@@ -488,7 +488,7 @@ export class DxfParser {
         const lw = this.lw;
         const n = lw.length >> 1;
         if (n < 2) { if (n === 0) this.skip('(incomplete)'); return; }
-        if (this.lwBulge) this.warnings.add('bulgesIgnored');
+        if (this.lwBulge && !this.curBlock) this.warnings.add('bulgesIgnored');
         const color = this.color();
         const o = this.ocs();
         const a = new Float64Array(3), b = new Float64Array(3), first = new Float64Array(3);
@@ -673,7 +673,7 @@ export class DxfParser {
         this.toWcs(o, v[i * 3], v[i * 3 + 1], v[i * 3 + 2] !== 0 ? v[i * 3 + 2] : this.plElev, p, 0);
         v[i * 3] = p[0]; v[i * 3 + 1] = p[1]; v[i * 3 + 2] = p[2];
       }
-      if (this.lwBulge) this.warnings.add('bulgesIgnored');
+      if (this.lwBulge && !this.curBlock) this.warnings.add('bulgesIgnored');
     }
     if (nv === 1) { out.point(layer, color, v[0], v[1], v[2]); return; }
     for (let i = 1; i < nv; i++) {

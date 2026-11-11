@@ -41,7 +41,8 @@ export type WarningCode =
   | 'texturesDropped'
   | 'nonFiniteCoords'
   | 'recursionLimit'
-  | 'farOutliers';
+  | 'farOutliers'
+  | 'solidsSkipped';
 
 export interface Diagnostics {
   format: FileFormat;

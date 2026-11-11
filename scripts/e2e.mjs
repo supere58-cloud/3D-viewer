@@ -169,6 +169,32 @@ await run('tablet, landscape, several files', { ...devices['iPad (gen 7) landsca
   check(await page.evaluate(() => window.__app.viewer.rig.ortho), 'orthographic toggle');
 });
 
+await run('desktop, wheel zoom', { viewport: { width: 1100, height: 700 } }, async (page) => {
+  await openFiles(page, [sample]);
+  const box = await page.locator('.stage').boundingBox();
+  const state = () => page.evaluate(() => { const v = window.__app.viewer, s = v.rig.state; return { d: s.distance, r: v.rig.sceneRadius, t: s.target.toArray(), cam: v.rig.camera.position.toArray() }; });
+  // Over the pit: zooming in closes on the surface under the cursor and never passes through it.
+  const px = box.x + box.width * 0.5, py = box.y + box.height * 0.5;
+  await page.mouse.move(px, py);
+  const under = await page.evaluate(([x, y]) => { const v = window.__app.viewer; v.rig.update(performance.now()); return v.pick(x, y, false, false); }, [px - box.x, py - box.y]);
+  for (let i = 0; i < 60; i++) await page.mouse.wheel(0, -120);
+  await page.waitForTimeout(400);
+  const after = await page.evaluate(([x, y]) => { const v = window.__app.viewer; v.rig.update(performance.now()); return v.pick(x, y, false, false); }, [px - box.x, py - box.y]);
+  const near = await state();
+  const moved = under && after ? Math.hypot(under.point[0] - after.point[0], under.point[1] - after.point[1], under.point[2] - after.point[2]) : NaN;
+  check(under && after && moved < 1 && near.d < 1, `zooming in stays on the point under the cursor (moved ${moved.toFixed(3)} m, ${near.d.toFixed(3)} m away)`);
+  // Over empty space: the camera keeps travelling instead of stalling in front of the pivot.
+  await page.evaluate(() => window.__app.viewer.fitAll(false));
+  await page.mouse.move(box.x + 160, box.y + box.height - 30);
+  await page.waitForTimeout(400);
+  const start = await state();
+  for (let i = 0; i < 80; i++) await page.mouse.wheel(0, -120);
+  await page.waitForTimeout(400);
+  const end = await state();
+  const travelled = Math.hypot(end.cam[0] - start.cam[0], end.cam[1] - start.cam[1], end.cam[2] - start.cam[2]);
+  check(travelled > start.d * 1.1 && end.d >= end.r * 0.149, `zooming into empty space flies on past the pivot (${travelled.toFixed(0)} m travelled from ${start.d.toFixed(0)} m away)`);
+});
+
 await run('installed PWA, offline', { ...devices['Pixel 7'], serviceWorkers: 'allow' }, async (page) => {
   await page.evaluate(() => navigator.serviceWorker.ready);
   await page.waitForFunction(async () => (await caches.keys()).length > 0 && navigator.serviceWorker.controller !== null, null, { timeout: 20000 }).catch(() => undefined);

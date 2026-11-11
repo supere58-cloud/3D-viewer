@@ -68,6 +68,10 @@ const MAX_LABEL_PX = 30;
 const MAX_LABELS = 500;
 const MAX_LABELS_MOVING = 160;
 const GRID_HALF = 24;
+const BACKGROUND = 0x5a5e64;
+/** Grid line brightness (linear), chosen to read on the grey background without competing with the model. */
+const GRID_MINOR = 0.26;
+const GRID_MAJOR = 0.48;
 
 const SRGB_TO_LINEAR = (() => {
   const t = new Uint8Array(256);
@@ -141,18 +145,31 @@ export class Viewer {
     const dpr = window.devicePixelRatio || 1;
     // On dense screens MSAA costs a lot of fill rate and adds little.
     this.renderer = new WebGLRenderer({ canvas: this.canvas, antialias: dpr <= 1.5, alpha: false, powerPreference: 'high-performance' });
-    this.renderer.setClearColor(0x0b0e12, 1);
+    // Neutral mid-grey: dark blues and purples stay visible, and so do white, yellow and cyan.
+    this.renderer.setClearColor(BACKGROUND, 1);
     this.pixelRatio = Math.min(dpr, 2);
     this.renderer.setPixelRatio(this.pixelRatio);
 
     this.scene.add(new AmbientLight(0xffffff, 0.5));
     this.scene.add(this.headlight, this.headlight.target);
 
+    // The grid is built once in cell units and scaled to the current cell
+    // size. Every line is cut into cell-long pieces: some mobile GPU drivers
+    // drop a whole line when one of its ends is behind the eye.
     const gridGeo = new BufferGeometry();
-    const lines = (GRID_HALF * 2 + 1) * 2;
-    gridGeo.setAttribute('position', new BufferAttribute(new Float32Array(lines * 6), 3));
-    gridGeo.setAttribute('color', new BufferAttribute(new Float32Array(lines * 6), 3));
-    this.grid = new LineSegments(gridGeo, new LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.55, depthWrite: false }));
+    const segments = (GRID_HALF * 2 + 1) * (GRID_HALF * 2) * 2;
+    const gridPos = new Float32Array(segments * 6);
+    let go = 0;
+    for (let i = -GRID_HALF; i <= GRID_HALF; i++) {
+      for (let j = -GRID_HALF; j < GRID_HALF; j++) {
+        gridPos[go] = i; gridPos[go + 1] = j; gridPos[go + 3] = i; gridPos[go + 4] = j + 1;
+        gridPos[go + 6] = j; gridPos[go + 7] = i; gridPos[go + 9] = j + 1; gridPos[go + 10] = i;
+        go += 12;
+      }
+    }
+    gridGeo.setAttribute('position', new BufferAttribute(gridPos, 3));
+    gridGeo.setAttribute('color', new BufferAttribute(new Float32Array(segments * 6), 3));
+    this.grid = new LineSegments(gridGeo, new LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.7, depthWrite: false }));
     this.grid.frustumCulled = false;
     this.grid.renderOrder = -1;
     this.grid.visible = false;
@@ -164,6 +181,7 @@ export class Viewer {
       onChange: () => this.requestRender(),
       onTap: (x, y, touch) => this.events.onPick(this.pick(x, y, touch)),
       onInteract: (active) => this.setInteracting(active),
+      onZoomStart: (x, y, touch) => this.anchorZoom(x, y, touch),
     });
 
     this.canvas.addEventListener('webglcontextlost', (e) => {
@@ -440,6 +458,19 @@ export class Viewer {
     this.requestRender();
   }
 
+  /**
+   * Start of a pinch or wheel zoom: put the pivot on whatever is under the
+   * fingers so the zoom closes in on it and cannot run past it. One pick per
+   * gesture, nothing per frame.
+   */
+  private anchorZoom(x: number, y: number, touch: boolean): void {
+    const so = this.sceneOrigin;
+    // The wider touch radius is used for the mouse too, so thin strings are easy to catch.
+    void touch;
+    const hit = so ? this.pick(x, y, true, false) : null;
+    this.rig.zoomFree = !(hit && so && this.rig.anchorAt(this.tmp.set(hit.point[0] - so[0], hit.point[1] - so[1], hit.point[2] - so[2]).clone()));
+  }
+
   // --- render ------------------------------------------------------------
   private render(now: number): void {
     this.frame = 0;
@@ -476,30 +507,43 @@ export class Viewer {
     }
     g.visible = true;
     const rig = this.rig;
-    const span = rig.viewSpan * Math.max(1, rig.width / rig.height);
+    const st = rig.state;
+    // The grid lies below the model, so what is on screen is the part of the
+    // plane the view axis meets, not the part under the pivot. Centre it
+    // there and size the cells for that distance, otherwise it slides out of
+    // view when zooming in.
+    let gx = st.target.x, gy = st.target.y, reach = st.distance;
+    const fz = rig.forward.z;
+    if (Math.abs(fz) > 0.03) {
+      const t = Math.min((this.gridZ - st.target.z) / fz, st.distance * 40);
+      if (t > -st.distance) {
+        gx += rig.forward.x * t;
+        gy += rig.forward.y * t;
+        if (!rig.ortho) reach += t;
+      }
+    }
+    const span = rig.viewSpan * (reach / st.distance) * Math.max(1, rig.width / rig.height);
     const step = niceStep(span / 8);
     // Lines sit on round true coordinates.
-    const ix = Math.round((rig.state.target.x + so[0]) / step), iy = Math.round((rig.state.target.y + so[1]) / step);
-    const key = step + ':' + ix + ':' + iy;
+    const ix = Math.round((gx + so[0]) / step), iy = Math.round((gy + so[1]) / step);
     g.position.set(ix * step - so[0], iy * step - so[1], this.gridZ);
+    g.scale.set(step, step, 1);
+    // Every fifth line is brighter; only the colours depend on where the grid sits.
+    const mx = ((ix % 5) + 5) % 5, my = ((iy % 5) + 5) % 5;
+    const key = mx + ':' + my;
     if (key !== this.gridKey) {
       this.gridKey = key;
-      const pos = g.geometry.getAttribute('position') as BufferAttribute;
       const col = g.geometry.getAttribute('color') as BufferAttribute;
-      const p = pos.array as Float32Array, c = col.array as Float32Array;
-      const ext = GRID_HALF * step;
+      const c = col.array as Float32Array;
       let o = 0;
-      const put = (x1: number, y1: number, x2: number, y2: number, major: boolean): void => {
-        p[o] = x1; p[o + 1] = y1; p[o + 2] = 0; p[o + 3] = x2; p[o + 4] = y2; p[o + 5] = 0;
-        const v = major ? 0.42 : 0.16;
-        for (let k = 0; k < 6; k++) c[o + k] = v;
-        o += 6;
-      };
       for (let i = -GRID_HALF; i <= GRID_HALF; i++) {
-        put(i * step, -ext, i * step, ext, (ix + i) % 5 === 0);
-        put(-ext, i * step, ext, i * step, (iy + i) % 5 === 0);
+        const vx = (mx + i + 5 * GRID_HALF) % 5 === 0 ? GRID_MAJOR : GRID_MINOR;
+        const vy = (my + i + 5 * GRID_HALF) % 5 === 0 ? GRID_MAJOR : GRID_MINOR;
+        for (let j = 0; j < GRID_HALF * 2; j++) {
+          for (let k = 0; k < 6; k++) { c[o + k] = vx; c[o + 6 + k] = vy; }
+          o += 12;
+        }
       }
-      pos.needsUpdate = true;
       col.needsUpdate = true;
     }
     if (step !== this.gridStep) {
@@ -676,8 +720,11 @@ export class Viewer {
   }
 
   // --- picking -----------------------------------------------------------
-  /** x, y in CSS pixels relative to the viewport. Returns true coordinates. */
-  pick(x: number, y: number, touch: boolean): PickResult | null {
+  /**
+   * x, y in CSS pixels relative to the viewport. Returns true coordinates.
+   * With `snapToVertex` off the result is the point exactly under (x, y).
+   */
+  pick(x: number, y: number, touch: boolean, snapToVertex = true): PickResult | null {
     const so = this.sceneOrigin;
     if (!so) return null;
     const rig = this.rig;
@@ -685,7 +732,7 @@ export class Viewer {
     const cam = rig.camera;
     this.viewProj.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
     const radius = touch ? 24 : 10;
-    const snap = touch ? 20 : 10;
+    const snap = !snapToVertex ? 0 : touch ? 20 : 10;
     const depthOf = (p: Vector3): number => this.tmp.copy(p).sub(cam.position).dot(rig.forward);
 
     // 1. Surfaces through the BVH.

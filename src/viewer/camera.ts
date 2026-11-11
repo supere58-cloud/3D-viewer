@@ -24,6 +24,8 @@ export class CameraRig {
   readonly perspective = new PerspectiveCamera(FOV, 1, 0.1, 1000);
   readonly orthographic = new OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
   ortho = false;
+  /** True while a zoom gesture that began on empty space is in progress. */
+  zoomFree = false;
   state: CameraState = { target: new Vector3(), heading: 0.6, tilt: 0.6, distance: 100 };
   readonly right = new Vector3();
   readonly up = new Vector3();
@@ -145,16 +147,56 @@ export class CameraRig {
     this.state.target.addScaledVector(this.right, -dxPx * u).addScaledVector(this.up, dyPx * u);
   }
 
-  /** Zooms by `factor` (>1 = closer) keeping the point under (px,py) fixed. */
+  /**
+   * Zooms by `factor` (>1 = closer) keeping the point under (px,py) fixed.
+   *
+   * Zooming shrinks the distance to the pivot, so the pivot acts as a wall.
+   * When the gesture started on geometry the pivot was moved onto it
+   * (anchorAt), which is what the user wants to approach. When it started on
+   * empty space (`zoomFree`), the camera flies forward once it gets close to
+   * the pivot instead of stalling in front of it.
+   */
   zoomAt(factor: number, px: number, py: number): void {
     const s = this.state;
+    const cx = px - this.width / 2, cy = py - this.height / 2;
+    if (this.zoomFree && !this.ortho && factor > 1) {
+      const floor = Math.max(this.sceneRadius * 0.15, 1e-3);
+      if (s.distance <= floor) {
+        // Same camera motion as a zoom step, but the pivot moves along with it.
+        const k = 1 - 1 / factor;
+        const u = this.unitsPerPixel;
+        s.target
+          .addScaledVector(this.right, cx * u * k)
+          .addScaledVector(this.up, -cy * u * k)
+          .addScaledVector(this.forward, s.distance * k);
+        return;
+      }
+      factor = Math.min(factor, s.distance / floor);
+    }
     const next = Math.min(1e8, Math.max(1e-3, s.distance / factor));
     const real = s.distance / next;
-    const u = this.unitsPerPixel;
-    const cx = px - this.width / 2, cy = py - this.height / 2;
-    const k = u * (1 - 1 / real);
+    const k = this.unitsPerPixel * (1 - 1 / real);
     s.target.addScaledVector(this.right, cx * k).addScaledVector(this.up, -cy * k);
     s.distance = next;
+  }
+
+  /**
+   * Moves the pivot to the depth of `point` (scene coordinates) without
+   * moving the picture. Returns false if the point is behind the eye.
+   */
+  anchorAt(point: Vector3): boolean {
+    const s = this.state;
+    const cam = this.camera;
+    const depth = this.back.copy(point).sub(cam.position).dot(this.forward);
+    if (this.ortho) {
+      // Orthographic scale depends on distance, so only slide the pivot along the view axis.
+      s.target.addScaledVector(this.forward, depth - s.distance);
+      return true;
+    }
+    if (!(depth > 1e-3)) return false;
+    s.target.copy(cam.position).addScaledVector(this.forward, depth);
+    s.distance = depth;
+    return true;
   }
 
   /** Distance at which a sphere of `radius` fills the view. */
@@ -169,6 +211,8 @@ export type GestureSink = {
   onChange(): void;
   onTap(x: number, y: number, touch: boolean): void;
   onInteract(active: boolean): void;
+  /** A pinch or wheel zoom begins at (x, y): the place to move the pivot onto what is under the fingers. */
+  onZoomStart(x: number, y: number, touch: boolean): void;
 };
 
 /** Touch: one finger orbits, two fingers pinch-zoom and pan. Mouse: left orbit, right/middle pan, wheel zoom. */
@@ -184,6 +228,9 @@ export class Gestures {
   private lastCy = 0;
   private button = 0;
   private wheelTimer = 0;
+  private wheeling = false;
+  private wheelX = 0;
+  private wheelY = 0;
 
   constructor(private el: HTMLElement, private rig: CameraRig, private sink: GestureSink) {
     el.style.touchAction = 'none';
@@ -214,6 +261,7 @@ export class Gestures {
     } else {
       this.multi = true;
       this.resetPinch();
+      if (this.pointers.size === 2) this.sink.onZoomStart(this.lastCx, this.lastCy, true);
     }
     this.sink.onInteract(true);
   };
@@ -278,10 +326,16 @@ export class Gestures {
     const p = this.local(e);
     this.rig.stopAnimation();
     const delta = e.deltaMode === 1 ? e.deltaY * 30 : e.deltaY;
+    // One pick per burst of wheel events (or when the cursor has moved on).
+    if (!this.wheeling || Math.hypot(p.x - this.wheelX, p.y - this.wheelY) > 24) {
+      this.wheeling = true;
+      this.wheelX = p.x; this.wheelY = p.y;
+      this.sink.onZoomStart(p.x, p.y, false);
+    }
     this.rig.zoomAt(Math.exp(-delta * 0.0015), p.x, p.y);
     this.sink.onInteract(true);
     this.sink.onChange();
     window.clearTimeout(this.wheelTimer);
-    this.wheelTimer = window.setTimeout(() => this.sink.onInteract(false), 200);
+    this.wheelTimer = window.setTimeout(() => { this.wheeling = false; this.sink.onInteract(false); }, 250);
   };
 }
