@@ -428,11 +428,58 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); ou
 .file-name {
   flex: 1 1 auto;
   min-width: 0;
+  min-height: var(--touch);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
   font-weight: 700;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  text-align: left;
 }
+.file-name-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.chev { display: inline-flex; transition: transform 0.12s; }
+.chev.folded { transform: rotate(-90deg); }
+.tab.tab-icon { flex: 0 0 48px; display: inline-flex; align-items: center; justify-content: center; }
+
+/* ---------- notes ---------- */
+.note { padding: 6px 8px 10px; border-bottom: 1px solid #26303b; }
+.note-head { display: flex; align-items: center; gap: 2px; }
+.note-n {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin: 0 4px;
+  border-radius: 50%;
+  background: #ff9500;
+  color: #000;
+  font-weight: 700;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.note-n.plain { background: var(--panel-2); color: var(--text); border: 1.5px solid var(--line); }
+.note-xyz { font-weight: 700; font-size: 14.5px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.note-text {
+  display: block;
+  width: 100%;
+  min-height: var(--touch);
+  margin-top: 4px;
+  padding: 10px;
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  resize: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.note-text:focus { outline: none; border-color: var(--accent); }
 .layer, .recent {
   display: flex;
   align-items: center;
@@ -607,3 +654,6 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); ou
 }
 
 #app:not(.wide) .m-actions .icon { display: none; }
+
+#app:not(.wide) .m-actions .btn { font-size: 12.5px; padding: 0 2px; }
+.row-actions.compact .btn { font-size: 14px; padding: 0 8px; gap: 6px; }

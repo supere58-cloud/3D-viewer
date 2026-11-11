@@ -58,6 +58,17 @@ purple layers stay visible as well as white, yellow and cyan ones.
   true X / Y / Z to two decimals, the layer and the source file. A second tap
   adds 3D distance, horizontal distance, ΔZ, azimuth (clockwise from north) and
   dip (negative = downwards). **Копировать** copies it all as text.
+- **Notes**: after tapping a point, **Заметка** adds a note tied to its
+  X / Y / Z, layer and file; it shows as a numbered orange pin in the model. The
+  Notes tab also takes general notes without a point. **Таблица (CSV)** saves
+  all notes as a table (number, date, X, Y, Z, layer, file, text) through the
+  share sheet on phones and tablets or as a download on a PC; **Копировать
+  таблицу** puts the same table on the clipboard for pasting into a
+  spreadsheet. Notes are kept on the device.
+- **Continue where you left off**: the start screen offers to reopen the files
+  that were open last time.
+- **Layers**: with more than three files open, each file's layer list starts
+  folded; tap the file name to unfold it.
 - **Layers**: grouped by file; eye = visibility, swatch = colour, the percent
   button cycles opacity 100 / 50 / 20 %. Settings are remembered per file
   (file name + size).
@@ -317,6 +328,9 @@ first contact with real hardware and real data.
   Commander…). Which apps offer Mine Viewer depends on the MIME type they
   attach to a `.dxf`; the manifest lists the common ones and
   `application/octet-stream`.
+- Exporting the notes table from the Android and iOS apps (written to the
+  app cache, then handed to the system share sheet) compiles but has not been
+  run on a device.
 - The Android folder picker (system dialog, walking the folder, copying the
   files) compiles but has not been run on a device.
 - Reading large shared files through the bridge (base64 chunks): speed and

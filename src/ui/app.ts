@@ -7,7 +7,9 @@ import { initNative, isNative, pickNativeFolder, platform, releaseNative, type I
 import { fileKey, privateStorageAvailable, store, storeName, storedExists, type RecentFile, type Settings } from '../platform/storage';
 import { Viewer, type LayerSettings, type PickResult, type ViewFile, type ViewLayer } from '../viewer/viewer';
 import { clear, copyText, fmt, h, icon } from './dom';
+import { exportTextFile } from '../platform/export';
 import { measure } from './measure';
+import { notesToCsv, notesToTsv, type Note, type NoteHeaders } from './notes';
 import { Panel } from './panel';
 
 type QueueItem = LoadSource & { nativePath?: string };
@@ -42,6 +44,7 @@ export class App {
   private current: LoadHandle | null = null;
   private keys = new Map<ViewFile, string>();
   private nextId = 1;
+  private notes: Note[] = store.notes();
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -99,6 +102,13 @@ export class App {
       openRecent: (r) => void this.openRecent(r),
       loadedKeys: () => new Set(this.keys.values()),
       layerChanged: (file) => this.persistLayers(file),
+      notes: () => this.notes,
+      addNote: () => this.addNote(null),
+      updateNote: (id, text) => this.updateNote(id, text),
+      deleteNote: (id) => this.deleteNote(id),
+      gotoNote: (note) => { if (note.point) this.viewer?.centerOn(note.point); },
+      exportNotes: () => void this.exportNotes(),
+      copyNotes: () => void copyText(notesToTsv(this.notes, this.noteHeaders())).then((ok) => this.toast(t(ok ? 'm.copied' : 'm.copyFailed'), ok ? 'info' : 'error')),
       closeFile: (file) => this.closeFile(file),
       toast: (msg, kind) => this.toast(msg, kind),
       layoutChanged: () => this.syncLayout(),
@@ -170,6 +180,13 @@ export class App {
     if (this.canPickFolder) {
       this.empty.append(h('button', { class: 'btn big', type: 'button', onclick: () => this.openFolder() }, icon('folder'), t('files.openFolder')));
     }
+    // One tap back to the files that were open last time.
+    const last = this.lastSession();
+    if (last.length > 0) {
+      this.empty.append(h('button', { class: 'btn big', type: 'button', onclick: () => this.enqueue(last.map((r) => ({ kind: 'stored' as const, name: r.name, size: r.size, store: r.store as string }))) },
+        icon('file'), t('empty.resume', { n: last.length })));
+    }
+    this.syncPins();
     for (const el of this.root.querySelectorAll<HTMLElement>('[data-i18n]')) el.textContent = t(el.dataset.i18n as StringKey);
     if (v?.cube) {
       v.cube.labels = { top: t('cube.top'), bottom: t('cube.bottom'), north: t('letter.north'), south: t('letter.south'), east: t('letter.east'), west: t('letter.west') };
@@ -313,8 +330,69 @@ export class App {
     const last = b ?? a;
     card.append(h('div', { class: 'm-actions' },
       h('button', { class: 'btn', type: 'button', onclick: () => void copyText(this.measureText()).then((ok) => this.toast(t(ok ? 'm.copied' : 'm.copyFailed'), ok ? 'info' : 'error')) }, icon('copy'), t('m.copy')),
+      h('button', { class: 'btn', type: 'button', onclick: () => this.addNote(last) }, icon('note'), t('m.note')),
       h('button', { class: 'btn', type: 'button', onclick: () => this.viewer?.centerOn(last.point) }, icon('target'), t('m.center')),
       h('button', { class: 'btn', type: 'button', onclick: () => this.clearMeasure() }, icon('close'), t('m.clear'))));
+  }
+
+  // --- notes -------------------------------------------------------------
+  private noteHeaders(): NoteHeaders {
+    return { n: t('notes.col.n'), date: t('notes.col.date'), x: 'X', y: 'Y', z: 'Z', layer: t('notes.col.layer'), file: t('notes.col.file'), note: t('notes.col.note') };
+  }
+
+  private syncPins(): void {
+    const pins: { p: Vec3; label: string }[] = [];
+    this.notes.forEach((n, i) => { if (n.point) pins.push({ p: n.point, label: String(i + 1) }); });
+    this.viewer?.setPins(pins);
+  }
+
+  private saveNotes(): void {
+    store.saveNotes(this.notes);
+    this.syncPins();
+  }
+
+  /** New note, tied to a picked point or general; opens it for typing. */
+  private addNote(at: PickResult | null): void {
+    const note: Note = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      ts: Date.now(), text: '', point: at ? [...at.point] : null, layer: at?.layer ?? '', file: at?.file ?? '',
+    };
+    this.notes.push(note);
+    this.saveNotes();
+    this.panel.show('notes', note.id);
+  }
+
+  private updateNote(id: string, text: string): void {
+    const n = this.notes.find((x) => x.id === id);
+    if (!n) return;
+    n.text = text;
+    store.saveNotes(this.notes);
+  }
+
+  private deleteNote(id: string): void {
+    this.notes = this.notes.filter((x) => x.id !== id);
+    this.saveNotes();
+    this.panel.render();
+  }
+
+  private async exportNotes(): Promise<void> {
+    const d = new Date();
+    const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    const csv = notesToCsv(this.notes, this.noteHeaders(), this.settings.lang === 'ru' ? ';' : ',');
+    const r = await exportTextFile(`notes-${stamp}.csv`, csv, 'text/csv');
+    if (r === 'failed') this.toast(t('notes.exportFailed'), 'error');
+    else if (r === 'downloaded') this.toast(t('notes.exported'));
+  }
+
+  // --- last session ------------------------------------------------------
+  /** Recent entries of the files that were open last time and still have a stored copy. */
+  private lastSession(): RecentFile[] {
+    const recents = store.recents();
+    return store.session().map((k) => recents.find((r) => r.key === k && r.store)).filter((r): r is RecentFile => !!r);
+  }
+
+  private saveSession(): void {
+    store.saveSession([...this.keys.values()]);
   }
 
   // --- opening files -----------------------------------------------------
@@ -411,6 +489,7 @@ export class App {
     }
     this.queueTotal = this.queueDone = 0;
     this.busy.hidden = true;
+    this.saveSession();
     // Several files at once: frame them together.
     if (lastLoaded && viewer.files.length > 1) viewer.fitAll();
     if (viewer.files.some((f) => !f.diagnostics.bbox)) this.panel.show('diag');
@@ -429,6 +508,7 @@ export class App {
     this.viewer?.removeFile(file);
     if (this.pickA?.file === file.name || this.pickB?.file === file.name || this.viewer?.files.length === 0) this.clearMeasure();
     if (rerender) {
+      this.saveSession();
       this.syncEmpty();
       this.panel.render();
     }

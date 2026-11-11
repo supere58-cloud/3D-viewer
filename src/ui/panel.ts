@@ -4,10 +4,11 @@ import { hasKey, t, type Lang, type StringKey } from '../i18n';
 import { store, type RecentFile, type Settings } from '../platform/storage';
 import type { Opacity, Viewer, ViewFile, ViewLayer } from '../viewer/viewer';
 import { clear, copyText, fmt, fmtBytes, fmtCount, h, icon } from './dom';
+import { formatDate, type Note } from './notes';
 
 declare const __APP_VERSION__: string;
 
-export type Tab = 'layers' | 'files' | 'diag' | 'settings';
+export type Tab = 'layers' | 'files' | 'notes' | 'diag' | 'settings';
 type Sheet = 'peek' | 'half' | 'full';
 
 export interface PanelDeps {
@@ -23,13 +24,20 @@ export interface PanelDeps {
   closeFile(file: ViewFile): void;
   toast(message: string, kind?: 'info' | 'error'): void;
   layoutChanged(): void;
+  notes(): Note[];
+  addNote(): void;
+  updateNote(id: string, text: string): void;
+  deleteNote(id: string): void;
+  gotoNote(note: Note): void;
+  exportNotes(): void;
+  copyNotes(): void;
 }
 
 const SWATCHES = [
   0xffffff, 0xffd400, 0xff9500, 0xff3b30, 0xff5ad1, 0xb07bff, 0x4da3ff, 0x00e5ff, 0x3dffb8, 0x7dff5a, 0xc8ff00, 0x9aa5b1,
 ];
 const PEEK = 60;
-const TABS: Tab[] = ['layers', 'files', 'diag', 'settings'];
+const TABS: Tab[] = ['layers', 'files', 'notes', 'diag', 'settings'];
 
 export class Panel {
   readonly el: HTMLElement;
@@ -41,6 +49,9 @@ export class Panel {
   private collapsed = false;
   private dialog: HTMLElement | null = null;
   private dragging = false;
+  /** Files whose layer list is folded away. */
+  private folded = new Set<string>();
+  private seenFiles = new Set<string>();
 
   constructor(private deps: PanelDeps) {
     const handle = h('div', { class: 'sheet-handle', role: 'button', 'aria-label': 'panel' }, h('span'));
@@ -86,12 +97,18 @@ export class Panel {
     this.applySheet();
   }
 
-  show(tab: Tab): void {
+  /** Opens a tab; `focusNote` puts the cursor into that note. */
+  show(tab: Tab, focusNote?: string): void {
     this.tab = tab;
     if (this.wide) this.collapsed = false;
     else if (this.sheet === 'peek') this.sheet = 'half';
     this.applySheet();
     this.render();
+    if (focusNote) {
+      const el = this.body.querySelector<HTMLTextAreaElement>(`[data-note="${focusNote}"] textarea`);
+      el?.scrollIntoView({ block: 'nearest' });
+      el?.focus();
+    }
   }
 
   /** Android back button. Returns true if something was closed. */
@@ -141,7 +158,8 @@ export class Panel {
       const b = h('button', { class: 'tab', type: 'button', role: 'tab', 'aria-selected': String(tab === this.tab), onclick: () => {
         if (this.tab === tab && !this.wide && this.sheet !== 'peek') { this.sheet = 'peek'; this.applySheet(); return; }
         this.show(tab);
-      } }, t(('tab.' + tab) as StringKey));
+      } }, tab === 'settings' ? icon('gear') : t(('tab.' + tab) as StringKey));
+      if (tab === 'settings') { b.classList.add('tab-icon'); b.setAttribute('aria-label', t('tab.settings')); }
       this.tabBar.append(b);
     }
     const scroll = this.body.scrollTop;
@@ -149,6 +167,7 @@ export class Panel {
     switch (this.tab) {
       case 'layers': this.renderLayers(); break;
       case 'files': this.renderFiles(); break;
+      case 'notes': this.renderNotes(); break;
       case 'diag': this.renderDiag(); break;
       case 'settings': this.renderSettings(); break;
     }
@@ -175,15 +194,25 @@ export class Panel {
       h('button', { class: 'btn', type: 'button', onclick: () => setAll(false) }, icon('eyeOff'), t('layers.hideAll'))));
 
     for (const file of files) {
+      // With many files open, new ones start folded so the list stays short.
+      if (!this.seenFiles.has(file.id)) {
+        this.seenFiles.add(file.id);
+        if (files.length > 3) this.folded.add(file.id);
+      }
+      const folded = this.folded.has(file.id);
       const eye = h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('layers.fileVisible'), 'aria-pressed': String(file.visible), onclick: () => {
         viewer.setFileVisible(file, !file.visible);
         this.render();
       } }, icon(file.visible ? 'eye' : 'eyeOff'));
       this.body.append(h('div', { class: 'file-head' + (file.visible ? '' : ' off') },
         eye,
-        h('div', { class: 'file-name', text: file.name }),
+        h('button', { class: 'file-name', type: 'button', 'aria-label': t('layers.collapse'), 'aria-expanded': String(!folded), onclick: () => {
+          if (folded) this.folded.delete(file.id); else this.folded.add(file.id);
+          this.render();
+        } }, h('span', { class: 'chev' + (folded ? ' folded' : '') }, icon('chevron')), h('span', { class: 'file-name-text', text: `${file.name} (${file.layers.length})` })),
         h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('layers.zoom'), onclick: () => viewer.fitAll(true, file) }, icon('zoom')),
         h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('layers.close'), onclick: () => this.deps.closeFile(file) }, icon('close'))));
+      if (folded) continue;
       const list = h('div', { class: 'layer-list' });
       for (const layer of file.layers) list.append(this.layerRow(viewer, file, layer));
       this.body.append(list);
@@ -285,6 +314,43 @@ export class Panel {
     }
     this.body.append(h('div', { class: 'pad' },
       h('button', { class: 'btn', type: 'button', onclick: () => { store.clearRecents(); this.render(); } }, icon('trash'), t('files.clear'))));
+  }
+
+  // --- notes -------------------------------------------------------------
+  private renderNotes(): void {
+    const notes = this.deps.notes();
+    this.body.append(h('div', { class: 'row-actions' },
+      h('button', { class: 'btn primary', type: 'button', onclick: () => this.deps.addNote() }, icon('note'), t('notes.new'))));
+    if (notes.length === 0) {
+      this.body.append(h('p', { class: 'muted pad', text: t('notes.none') }));
+      return;
+    }
+    this.body.append(h('div', { class: 'row-actions compact' },
+      h('button', { class: 'btn', type: 'button', onclick: () => this.deps.exportNotes() }, icon('download'), t('notes.export')),
+      h('button', { class: 'btn', type: 'button', onclick: () => this.deps.copyNotes() }, icon('copy'), t('notes.copy'))));
+    // Newest first; the number is the note's place in the exported table.
+    for (let i = notes.length - 1; i >= 0; i--) {
+      const n = notes[i];
+      const area = h('textarea', { class: 'note-text', rows: 2, placeholder: t('notes.placeholder') });
+      area.value = n.text;
+      const fit = (): void => { area.style.height = 'auto'; area.style.height = Math.min(220, area.scrollHeight + 2) + 'px'; };
+      area.addEventListener('input', () => { this.deps.updateNote(n.id, area.value); fit(); });
+      const where = n.point
+        ? `X ${fmt(n.point[0])}  Y ${fmt(n.point[1])}  Z ${fmt(n.point[2])}`
+        : t('notes.noPoint');
+      const card = h('div', { class: 'note' },
+        h('div', { class: 'note-head' },
+          h('span', { class: 'note-n' + (n.point ? '' : ' plain'), text: String(i + 1) }),
+          h('div', { class: 'layer-text' },
+            h('div', { class: 'note-xyz', text: where }),
+            h('div', { class: 'layer-meta', text: [formatDate(n.ts), n.layer, n.file].filter(Boolean).join(' · ') })),
+          n.point ? h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('notes.goto'), onclick: () => this.deps.gotoNote(n) }, icon('target')) : null,
+          h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('notes.delete'), onclick: () => this.deps.deleteNote(n.id) }, icon('trash'))),
+        area);
+      card.dataset.note = n.id;
+      this.body.append(card);
+      fit();
+    }
   }
 
   // --- diagnostics -------------------------------------------------------

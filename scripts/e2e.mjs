@@ -5,7 +5,7 @@
 // not a single request leaves the origin.
 import { createRequire } from 'node:module';
 import { preview } from 'vite';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -86,6 +86,20 @@ await run('phone, portrait', { ...devices['Pixel 7'] }, async (page) => {
   check(surf.only && surf.only.layer === 'Карьер' && surf.only.point[2] > 100 && surf.only.point[2] < 450, `surface pick returns a point on the pit: ${JSON.stringify(surf.only?.point.map((n) => +n.toFixed(2)))} (${surf.only?.kind})`);
   check(surf.hit && surf.hit.layer !== 'Скважины', `drillholes under the pit floor are not picked through it (got "${surf.hit?.layer}")`);
 
+  // Note tied to the measured point: appears in the Notes tab with coordinates and as a pin.
+  await page.getByRole('button', { name: 'Заметка', exact: true }).tap();
+  await page.waitForSelector('.note textarea');
+  await page.locator('.note textarea').first().fill('Вывал кровли; закрепить');
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: path.join(outDir, 'phone-notes.png') });
+  const noted = await page.evaluate(() => ({ notes: window.__app.notes, pins: window.__app.viewer.pins.length, b: window.__app.pickB.point }));
+  check(noted.notes.length === 1 && noted.pins === 1 && noted.notes[0].point[0] === noted.b[0] && noted.notes[0].text.startsWith('Вывал'), 'a note is tied to the picked point and pinned in the view');
+  await page.getByRole('button', { name: 'Новая заметка' }).tap();
+  check(await page.evaluate(() => window.__app.notes.length === 2 && window.__app.notes[1].point === null), 'a general note needs no point');
+  await page.getByRole('tab', { name: 'Слои' }).tap();
+  await page.getByRole('tab', { name: 'Слои' }).tap();
+  await page.waitForTimeout(300);
+
   // One-finger orbit changes heading; pinch changes distance.
   const before = await page.evaluate(() => ({ ...window.__app.viewer.rig.state, target: null }));
   const cdp = await page.context().newCDPSession(page);
@@ -131,6 +145,8 @@ await run('phone, portrait', { ...devices['Pixel 7'] }, async (page) => {
   await page.getByRole('tab', { name: 'Файлы' }).tap();
   await page.waitForTimeout(200);
   check(await page.locator('.recent').count() === 1, 'recent files list survives a reload');
+  check(await page.evaluate(() => window.__app.notes.length === 2), 'notes survive a reload');
+  check(await page.getByRole('button', { name: /Открыть прошлый набор \(1\)/ }).count() === 1, 'the start screen offers the files that were open last time');
   await page.locator('.recent-main').tap();
   await page.waitForFunction(() => window.__app.viewer.files.length === 1 && document.querySelector('.busy').hidden, null, { timeout: 60000 });
   check(await page.evaluate(() => window.__app.viewer.files[0].layers[0].opacity === 0.5), 'recent file reopens offline with its layer settings');
@@ -220,6 +236,17 @@ await run('desktop, open a folder', { viewport: { width: 1100, height: 700 } }, 
   await page.waitForFunction(() => window.__app.viewer.files.length >= 10 && document.querySelector('.busy').hidden, null, { timeout: 60000 });
   const n = await page.evaluate(() => window.__app.viewer.files.length);
   check(n === 10, `every loadable file in the folder is opened (${n}), the unreadable one is reported and skipped`);
+  const rows = await page.locator('.layer').count();
+  const heads = await page.locator('.file-head').count();
+  check(heads === 10 && rows < 12, `with many files open their layer lists start folded (${heads} files, ${rows} layer rows shown)`);
+  await page.locator('.file-head .file-name').last().click();
+  check(await page.locator('.layer').count() > rows, 'tapping a file name unfolds its layers');
+  // Notes table export.
+  await page.evaluate(() => window.__app.addNote({ point: [654321.126, 7654321.5, -12.3], kind: 'vertex', layer: 'Слой 1', file: 'a.dxf' }));
+  await page.locator('.note textarea').first().fill('проверка; "кавычки"');
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Таблица (CSV)' }).click()]);
+  const csv = readFileSync(await download.path(), 'utf8');
+  check(/^notes-\d{8}\.csv$/.test(download.suggestedFilename()) && csv.includes('1;') && csv.includes(';654321.13;7654321.50;-12.30;Слой 1;a.dxf;"проверка; ""кавычки"""'), 'notes export as a CSV table with coordinates');
   await page.screenshot({ path: path.join(outDir, 'desktop-folder.png') });
 });
 

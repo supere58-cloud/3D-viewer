@@ -23,6 +23,7 @@
     "@capacitor/core": "^8.6.0",
     "@capacitor/filesystem": "^8.1.5",
     "@capacitor/ios": "^8.6.0",
+    "@capacitor/share": "^8.0.3",
     "three": "^0.187.0",
     "three-mesh-bvh": "^0.9.18"
   },

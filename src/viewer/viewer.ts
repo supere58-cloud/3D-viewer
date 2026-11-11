@@ -113,6 +113,7 @@ export class Viewer {
   labelsEnabled = true;
   private markerA: Vec3 | null = null;
   private markerB: Vec3 | null = null;
+  private pins: { p: Vec3; label: string }[] = [];
   private frame = 0;
   private dirty = false;
   private paused = false;
@@ -478,6 +479,12 @@ export class Viewer {
     this.rig.zoomFree = !(hit && so && this.rig.anchorAt(this.tmp.set(hit.point[0] - so[0], hit.point[1] - so[1], hit.point[2] - so[2]).clone()));
   }
 
+  /** Note pins: true-coordinate points with a short label, drawn over the model. */
+  setPins(pins: { p: Vec3; label: string }[]): void {
+    this.pins = pins;
+    this.requestRender();
+  }
+
   // --- render ------------------------------------------------------------
   private render(now: number): void {
     this.frame = 0;
@@ -640,9 +647,34 @@ export class Viewer {
 
   private drawMarkers(ctx: CanvasRenderingContext2D): void {
     const so = this.sceneOrigin;
-    if (!so || !this.markerA) return;
+    if (!so) return;
     const m = this.viewProj.elements;
     const a = { x: 0, y: 0, w: 0 }, b = { x: 0, y: 0, w: 0 };
+    if (this.pins.length > 0) {
+      ctx.font = '700 12px system-ui, -apple-system, Roboto, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = 2;
+      for (const pin of this.pins) {
+        this.project(pin.p[0] - so[0], pin.p[1] - so[1], pin.p[2] - so[2], m, a);
+        if (a.w <= 0 || a.x < -20 || a.x > this.width + 20 || a.y < -20 || a.y > this.height + 20) continue;
+        // A small flag standing on the point.
+        ctx.strokeStyle = '#000';
+        ctx.fillStyle = '#ff9500';
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(a.x - 8, a.y - 14);
+        ctx.arc(a.x, a.y - 22, 11, Math.PI * 0.78, Math.PI * 0.22);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#000';
+        ctx.fillText(pin.label, a.x, a.y - 22);
+      }
+      ctx.textAlign = 'start';
+      ctx.textBaseline = 'alphabetic';
+    }
+    if (!this.markerA) return;
     const A = this.markerA, B = this.markerB;
     this.project(A[0] - so[0], A[1] - so[1], A[2] - so[2], m, a);
     if (B) this.project(B[0] - so[0], B[1] - so[1], B[2] - so[2], m, b);

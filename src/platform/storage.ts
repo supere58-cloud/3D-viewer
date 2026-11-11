@@ -4,6 +4,7 @@
  */
 import type { LayerSettings } from '../viewer/viewer';
 import { STORE_DIR } from '../worker/protocol';
+import type { Note } from '../ui/notes';
 
 export interface Settings {
   lang: 'ru' | 'en';
@@ -70,6 +71,23 @@ export const store = {
   },
   saveLayerSettings(key: string, value: Record<string, LayerSettings>): void {
     write('mv.layers.' + key, value);
+  },
+
+  notes(): Note[] {
+    const list = read<Note[]>('mv.notes', []);
+    return Array.isArray(list) ? list : [];
+  },
+  saveNotes(notes: Note[]): void {
+    write('mv.notes', notes);
+  },
+
+  /** Keys of the files that were open last, to offer "continue where I left off". */
+  session(): string[] {
+    const list = read<string[]>('mv.session', []);
+    return Array.isArray(list) ? list : [];
+  },
+  saveSession(keys: string[]): void {
+    write('mv.session', keys);
   },
 
   recents(): RecentFile[] {
