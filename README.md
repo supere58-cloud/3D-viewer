@@ -86,6 +86,7 @@ npm run dev        # dev server with hot reload (no CSP, no service worker)
 npm test           # unit tests: parser, encodings, measurement, picking, strings
 npm run build      # type-check + production build into dist/
 npm run preview    # serve dist/ locally
+npm run serve:lan  # same, but reachable from other devices on the same Wi-Fi
 ```
 
 Extra checks (need Playwright with Chromium installed on the machine; it is

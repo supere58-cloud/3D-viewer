@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
+    "serve:lan": "vite preview --host",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "fixtures": "node scripts/make-fixtures.mjs",
