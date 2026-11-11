@@ -15,6 +15,8 @@ export interface PanelDeps {
   settings(): Settings;
   updateSettings(patch: Partial<Settings>): void;
   openPicker(): void;
+  /** Null where the platform cannot pick a folder. */
+  openFolder: (() => void) | null;
   openRecent(r: RecentFile): void;
   loadedKeys(): Set<string>;
   layerChanged(file: ViewFile): void;
@@ -259,8 +261,10 @@ export class Panel {
   }
 
   private renderFiles(): void {
-    this.body.append(h('div', { class: 'pad' },
-      h('button', { class: 'btn primary big', type: 'button', onclick: () => this.deps.openPicker() }, icon('open'), t('files.open'))));
+    const openFolder = this.deps.openFolder;
+    this.body.append(h('div', { class: 'row-actions' },
+      h('button', { class: 'btn primary', type: 'button', onclick: () => this.deps.openPicker() }, icon('open'), t('files.open')),
+      openFolder ? h('button', { class: 'btn', type: 'button', onclick: () => openFolder() }, icon('folder'), t('files.openFolder')) : null));
     this.body.append(h('h3', { class: 'section', text: t('files.recent') }));
     const recents = store.recents();
     if (recents.length === 0) {

@@ -36,7 +36,8 @@ requests at all.
 | Orbit | one finger drag |
 | Zoom / pan | two fingers pinch / drag |
 | Measure | tap a point; tap a second point for distances |
-| Plan view, north up | **План** button, or tap the north arrow |
+| Look from a side | tap a face of the view cube (top = plan, north up) |
+| Turn the view in steps | arrows around the view cube |
 | Layers, files, diagnostics, settings | bottom sheet (phone) or side panel (tablet) |
 
 Mouse: left drag orbits, right drag or Shift+drag pans, wheel zooms.
@@ -46,6 +47,9 @@ it rather than running through. Started over empty space, it keeps flying
 forward instead. The view background is a neutral grey so that dark blue and
 purple layers stay visible as well as white, yellow and cyan ones.
 
+- **Open a folder**: the Folder button opens every DXF / GLB / OBJ / STL in a
+  folder and its sub-folders and skips the rest (Android app, Android Chrome
+  and desktop browsers; on iPad use the Open button and "Select all").
 - **Open files**: the Open button (several files at once), "Open with" / Share
   from a file manager or messenger (Android and iOS apps), or drag and drop in a
   desktop browser.
@@ -313,10 +317,14 @@ first contact with real hardware and real data.
   Commander…). Which apps offer Mine Viewer depends on the MIME type they
   attach to a `.dxf`; the manifest lists the common ones and
   `application/octet-stream`.
+- The Android folder picker (system dialog, walking the folder, copying the
+  files) compiles but has not been run on a device.
 - Reading large shared files through the bridge (base64 chunks): speed and
   memory for a 100 MB file are unmeasured.
 
 **iOS / iPadOS**
+- Whether Safari on iPad offers folder picking; where it does not, the Folder
+  button is hidden.
 - `ios/` was generated on Linux and never opened in Xcode or compiled.
 - The document-type registration and the file hand-off (`appUrlOpen` →
   Filesystem plugin) are untested.

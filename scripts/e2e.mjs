@@ -158,12 +158,30 @@ await run('tablet, landscape, several files', { ...devices['iPad (gen 7) landsca
   await page.evaluate(() => { const v = window.__app.viewer; const f = v.files[0]; v.centerOn([f.origin[0] + f.labels.pos[0], f.origin[1] + f.labels.pos[1], f.origin[2] + f.labels.pos[2]]); v.rig.stopAnimation(); v.rig.state.distance = 160; v.requestRender(); });
   await page.waitForTimeout(700);
   await page.screenshot({ path: path.join(outDir, 'tablet-labels.png') });
-  await page.locator('.tool').nth(2).tap();
+  // View cube: the top arrow twice from an oblique view ends looking straight down; tapping the top face gives plan, north up.
+  const cube = await page.locator('.viewcube').boundingBox();
+  await page.touchscreen.tap(cube.x + cube.width / 2, cube.y + 8);
+  await page.waitForTimeout(500);
+  await page.touchscreen.tap(cube.x + cube.width / 2, cube.y + 8);
+  await page.waitForTimeout(500);
+  const down = await page.evaluate(() => window.__app.viewer.rig.state.tilt);
+  check(Math.abs(down - Math.PI / 2) < 1e-6, 'view cube arrows tilt the view in steps up to straight down');
+  await page.touchscreen.tap(cube.x + cube.width / 2, cube.y + cube.height / 2);
   await page.waitForTimeout(600);
   const plan = await page.evaluate(() => { const s = window.__app.viewer.rig.state; return [s.heading, s.tilt]; });
   check(Math.abs(Math.sin(plan[0])) < 1e-6 && Math.abs(plan[1] - Math.PI / 2) < 1e-6, 'plan view looks straight down with north up');
   await page.evaluate(() => { const v = window.__app.viewer; v.fitAll(false, v.files[0]); });
-  await page.locator('.tool').nth(5).tap();
+  await page.touchscreen.tap(cube.x + 8, cube.y + cube.height / 2);
+  await page.waitForTimeout(500);
+  const turned = await page.evaluate(() => { const s = window.__app.viewer.rig.state; return s.heading; });
+  check(Math.abs(Math.abs(turned) - Math.PI / 2) < 1e-6, 'side arrow turns the view a quarter turn');
+  await page.touchscreen.tap(cube.x + cube.width / 2, cube.y + cube.height - 8);
+  await page.waitForTimeout(500);
+  await page.touchscreen.tap(cube.x + cube.width / 2, cube.y + cube.height - 8);
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: path.join(outDir, 'tablet-cube-side.png') });
+  check(await page.evaluate(() => Math.abs(window.__app.viewer.rig.state.tilt) < 1e-6), 'two steps down give a horizontal side view');
+  await page.getByRole('button', { name: 'Персп.' }).tap();
   await page.waitForTimeout(400);
   await page.screenshot({ path: path.join(outDir, 'tablet-plan-ortho.png') });
   check(await page.evaluate(() => window.__app.viewer.rig.ortho), 'orthographic toggle');
@@ -193,6 +211,16 @@ await run('desktop, wheel zoom', { viewport: { width: 1100, height: 700 } }, asy
   const end = await state();
   const travelled = Math.hypot(end.cam[0] - start.cam[0], end.cam[1] - start.cam[1], end.cam[2] - start.cam[2]);
   check(travelled > start.d * 1.1 && end.d >= end.r * 0.149, `zooming into empty space flies on past the pivot (${travelled.toFixed(0)} m travelled from ${start.d.toFixed(0)} m away)`);
+});
+
+await run('desktop, open a folder', { viewport: { width: 1100, height: 700 } }, async (page) => {
+  check(await page.getByRole('button', { name: 'Папка' }).count() === 1, 'folder button is offered');
+  // The fixtures folder holds supported models, one binary DXF and unrelated files.
+  await page.setInputFiles('input[webkitdirectory]', path.join(root, 'tests', 'fixtures'));
+  await page.waitForFunction(() => window.__app.viewer.files.length >= 10 && document.querySelector('.busy').hidden, null, { timeout: 60000 });
+  const n = await page.evaluate(() => window.__app.viewer.files.length);
+  check(n === 10, `every loadable file in the folder is opened (${n}), the unreadable one is reported and skipped`);
+  await page.screenshot({ path: path.join(outDir, 'desktop-folder.png') });
 });
 
 await run('installed PWA, offline', { ...devices['Pixel 7'], serviceWorkers: 'allow' }, async (page) => {

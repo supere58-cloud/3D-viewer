@@ -1,11 +1,15 @@
 package com.mineviewer.app;
 
+import android.app.Activity;
 import android.content.ClipData;
 import android.content.ContentResolver;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
+import android.provider.DocumentsContract;
 import android.provider.OpenableColumns;
+
+import androidx.activity.result.ActivityResult;
 
 import androidx.core.content.IntentCompat;
 
@@ -14,6 +18,7 @@ import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.io.File;
@@ -23,6 +28,7 @@ import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
@@ -138,6 +144,10 @@ public class FileIntakePlugin extends Plugin {
     }
 
     private JSObject copy(Uri uri) {
+        return copy(uri, displayName(uri));
+    }
+
+    private JSObject copy(Uri uri, String name) {
         File out = new File(intakeDir(), UUID.randomUUID().toString());
         long size = 0;
         try (InputStream in = getContext().getContentResolver().openInputStream(uri)) {
@@ -157,7 +167,7 @@ public class FileIntakePlugin extends Plugin {
         }
         JSObject f = new JSObject();
         f.put("path", Uri.fromFile(out).toString());
-        f.put("name", displayName(uri));
+        f.put("name", name);
         f.put("size", size);
         return f;
     }
@@ -180,6 +190,75 @@ public class FileIntakePlugin extends Plugin {
             }
         }
         notifyListeners("files", payload(files, failed));
+    }
+
+    // --- whole folder -----------------------------------------------------
+
+    private static final int MAX_FOLDER_FILES = 500;
+    private static final int MAX_FOLDER_DEPTH = 8;
+
+    private static boolean isModelFile(String name) {
+        String n = name.toLowerCase(Locale.ROOT);
+        return n.endsWith(".dxf") || n.endsWith(".glb") || n.endsWith(".obj") || n.endsWith(".stl");
+    }
+
+    /** Opens the system folder picker; resolves with every supported file in the chosen folder. */
+    @PluginMethod
+    public void pickFolder(PluginCall call) {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        startActivityForResult(call, intent, "folderPicked");
+    }
+
+    @ActivityCallback
+    private void folderPicked(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        Intent data = result.getData();
+        if (result.getResultCode() != Activity.RESULT_OK || data == null || data.getData() == null) {
+            JSObject r = payload(new ArrayList<>(), 0);
+            r.put("skipped", 0);
+            r.put("cancelled", true);
+            call.resolve(r);
+            return;
+        }
+        final Uri tree = data.getData();
+        io.execute(() -> {
+            List<JSObject> files = new ArrayList<>();
+            int[] counts = new int[2]; // [failed, skipped]
+            try {
+                walk(tree, DocumentsContract.getTreeDocumentId(tree), 0, files, counts);
+            } catch (Exception e) {
+                counts[0]++;
+            }
+            JSObject r = payload(files, counts[0]);
+            r.put("skipped", counts[1]);
+            r.put("cancelled", false);
+            call.resolve(r);
+        });
+    }
+
+    private void walk(Uri tree, String documentId, int depth, List<JSObject> files, int[] counts) {
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, documentId);
+        List<String[]> entries = new ArrayList<>();
+        String[] columns = {
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE
+        };
+        try (Cursor c = getContext().getContentResolver().query(children, columns, null, null, null)) {
+            while (c != null && c.moveToNext()) entries.add(new String[] { c.getString(0), c.getString(1), c.getString(2) });
+        }
+        for (String[] e : entries) {
+            String name = e[1] == null ? "" : e[1];
+            if (DocumentsContract.Document.MIME_TYPE_DIR.equals(e[2])) {
+                if (depth < MAX_FOLDER_DEPTH) walk(tree, e[0], depth + 1, files, counts);
+            } else if (isModelFile(name) && files.size() < MAX_FOLDER_FILES) {
+                JSObject f = copy(DocumentsContract.buildDocumentUriUsingTree(tree, e[0]), name);
+                if (f != null) files.add(f);
+                else counts[0]++;
+            } else {
+                counts[1]++;
+            }
+        }
     }
 
     /** Called once by the web layer after it has subscribed to "files". */

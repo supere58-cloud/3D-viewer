@@ -2,9 +2,6 @@
   "app.name": "Mine Viewer",
   "tb.open": "Open",
   "tb.fit": "Fit",
-  "tb.plan": "Plan",
-  "tb.south": "South",
-  "tb.east": "East",
   "tb.persp": "Persp.",
   "tb.ortho": "Ortho",
   "tb.panel": "Layers",
@@ -16,7 +13,7 @@
   "tab.diag": "Diagnostics",
   "tab.settings": "Settings",
   "empty.title": "Open a model",
-  "empty.hint": "DXF, GLB, OBJ or STL. You can pick several files. Files never leave the device.",
+  "empty.hint": "DXF, GLB, OBJ or STL. You can pick several files or a whole folder. Files never leave the device.",
   "empty.open": "Open files",
   "empty.drop": "Drop files to open",
   "m.point": "Point",
@@ -131,5 +128,13 @@
   "warn.nonFiniteCoords": "Entities with invalid coordinates were skipped.",
   "warn.recursionLimit": "Blocks are nested too deeply.",
   "warn.farOutliers": "Some entities are far from the main model (for example near 0,0). Their coordinates are approximate; the view frames the main model.",
-  "warn.solidsSkipped": "The file has AutoCAD solids or surfaces (3DSOLID, REGION, SURFACE, MESH). They are not drawn: export them as a face wireframe (3DFACE)."
+  "warn.solidsSkipped": "The file has AutoCAD solids or surfaces (3DSOLID, REGION, SURFACE, MESH). They are not drawn: export them as a face wireframe (3DFACE).",
+  "cube.top": "Top",
+  "cube.bottom": "Bottom",
+  "letter.west": "W",
+  "tb.folder": "Folder",
+  "files.openFolder": "Open folder",
+  "info.folder": "From folder: opening {n} files, skipped {m}",
+  "err.folderEmpty": "The folder has no DXF, GLB, OBJ or STL files",
+  "cube.label": "View cube: tap a face or an arrow"
 }

@@ -3,7 +3,7 @@ import { LoadError, type LoadErrorCode, type Vec3 } from '../core/types';
 import { formatFromName } from '../core/load';
 import { getLang, hasKey, setLang, t, type StringKey } from '../i18n';
 import { loadModel, type LoadHandle, type LoadSource } from '../platform/loader';
-import { initNative, isNative, releaseNative, type IncomingFile } from '../platform/native';
+import { initNative, isNative, pickNativeFolder, platform, releaseNative, type IncomingFile } from '../platform/native';
 import { fileKey, privateStorageAvailable, store, storeName, storedExists, type RecentFile, type Settings } from '../platform/storage';
 import { Viewer, type LayerSettings, type PickResult, type ViewFile, type ViewLayer } from '../viewer/viewer';
 import { clear, copyText, fmt, h, icon } from './dom';
@@ -29,6 +29,9 @@ export class App {
   private toasts!: HTMLElement;
   private banner!: HTMLElement;
   private fileInput!: HTMLInputElement;
+  private folderInput!: HTMLInputElement;
+  /** Whole-folder opening: native picker on Android, directory input where the browser has one. */
+  private canPickFolder = false;
   private gridStep = 0;
   private pickA: PickResult | null = null;
   private pickB: PickResult | null = null;
@@ -69,8 +72,15 @@ export class App {
       this.openFiles(files);
     });
 
-    const compass = h('canvas', { class: 'compass', role: 'button', tabindex: 0 });
-    compass.addEventListener('click', () => this.viewer?.view('plan'));
+    this.folderInput = h('input', { type: 'file', multiple: true, webkitdirectory: true, class: 'offscreen', tabindex: -1, 'aria-hidden': 'true' });
+    this.folderInput.addEventListener('change', () => {
+      const files = [...(this.folderInput.files ?? [])];
+      this.folderInput.value = '';
+      this.openFolderFiles(files);
+    });
+    this.canPickFolder = (isNative && platform === 'android') || 'webkitdirectory' in HTMLInputElement.prototype;
+
+    const compass = h('canvas', { class: 'viewcube', role: 'img' });
     this.gridLabel = h('div', { class: 'grid-label' });
     this.measureCard = h('div', { class: 'measure', hidden: true });
     this.empty = h('div', { class: 'empty' });
@@ -85,6 +95,7 @@ export class App {
       settings: () => this.settings,
       updateSettings: (patch) => this.updateSettings(patch),
       openPicker: () => this.fileInput.click(),
+      openFolder: this.canPickFolder ? () => this.openFolder() : null,
       openRecent: (r) => void this.openRecent(r),
       loadedKeys: () => new Set(this.keys.values()),
       layerChanged: (file) => this.persistLayers(file),
@@ -101,7 +112,7 @@ export class App {
     this.busy = h('div', { class: 'busy', hidden: true, role: 'dialog', 'aria-modal': 'true' },
       h('div', { class: 'busy-box' }, this.busyTitle, this.busyPhase, h('div', { class: 'bar' }, this.busyBar), cancel));
 
-    this.root.append(this.viewport, this.panel.el, this.busy, this.fileInput);
+    this.root.append(this.viewport, this.panel.el, this.busy, this.fileInput, this.folderInput);
 
     try {
       this.viewer = new Viewer(stage, compass, {
@@ -141,24 +152,29 @@ export class App {
       if (pressed !== undefined) b.setAttribute('aria-pressed', String(pressed));
       return b;
     };
-    this.toolbar.append(
+    const tools: (HTMLButtonElement | null)[] = [
       button(t('tb.open'), icon('open'), () => this.fileInput.click()),
+      this.canPickFolder ? button(t('tb.folder'), icon('folder'), () => this.openFolder()) : null,
       button(t('tb.fit'), icon('fit'), () => v?.fitAll()),
-      button(t('tb.plan'), icon('plan'), () => v?.view('plan')),
-      button(t('tb.south'), t('letter.south'), () => v?.view('south')),
-      button(t('tb.east'), t('letter.east'), () => v?.view('east')),
       button(this.settings.ortho ? t('tb.ortho') : t('tb.persp'), icon(this.settings.ortho ? 'ortho' : 'persp'),
         () => this.updateSettings({ ortho: !this.settings.ortho })),
       button(t('tb.panel'), icon('layers'), () => this.panel.toggle()),
-    );
+    ];
+    for (const b of tools) if (b) this.toolbar.append(b);
     clear(this.empty);
     this.empty.append(
       h('h1', { text: t('empty.title') }),
       h('p', { text: t('empty.hint') }),
       h('button', { class: 'btn primary big', type: 'button', onclick: () => this.fileInput.click() }, icon('open'), t('empty.open')),
     );
+    if (this.canPickFolder) {
+      this.empty.append(h('button', { class: 'btn big', type: 'button', onclick: () => this.openFolder() }, icon('folder'), t('files.openFolder')));
+    }
     for (const el of this.root.querySelectorAll<HTMLElement>('[data-i18n]')) el.textContent = t(el.dataset.i18n as StringKey);
-    if (v) v.compassLetter = t('letter.north');
+    if (v?.cube) {
+      v.cube.labels = { top: t('cube.top'), bottom: t('cube.bottom'), north: t('letter.north'), south: t('letter.south'), east: t('letter.east'), west: t('letter.west') };
+    }
+    this.viewport.querySelector('.viewcube')?.setAttribute('aria-label', t('cube.label'));
     this.renderGridLabel();
     this.renderMeasure();
     this.panel.render();
@@ -305,6 +321,28 @@ export class App {
   openFiles(files: File[]): void {
     if (files.length === 0) return;
     this.enqueue(files.map((f) => ({ kind: 'file' as const, name: f.name, size: f.size, file: f })));
+  }
+
+  /** Opens every supported file of a folder, including sub-folders. */
+  private openFolder(): void {
+    if (isNative && platform === 'android') {
+      void pickNativeFolder().then((r) => {
+        if (r.cancelled) return;
+        if (r.files.length === 0 && r.failed === 0) { this.toast(t('err.folderEmpty'), 'error'); return; }
+        this.toast(t('info.folder', { n: r.files.length, m: r.skipped }));
+        this.openNative(r.files, r.failed);
+      }).catch(() => this.toast(t('err.readFailed'), 'error'));
+    } else {
+      this.folderInput.click();
+    }
+  }
+
+  private openFolderFiles(all: File[]): void {
+    if (all.length === 0) return;
+    const files = all.filter((f) => formatFromName(f.name) !== null).sort((a, b) => a.name.localeCompare(b.name));
+    if (files.length === 0) { this.toast(t('err.folderEmpty'), 'error'); return; }
+    this.toast(t('info.folder', { n: files.length, m: all.length - files.length }));
+    this.openFiles(files);
   }
 
   private openNative(files: IncomingFile[], failed: number): void {

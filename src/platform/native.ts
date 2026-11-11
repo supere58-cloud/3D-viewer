@@ -14,6 +14,8 @@ interface FileIntakePlugin {
   getPending(): Promise<{ files: IncomingFile[]; failed: number }>;
   /** Deletes the cache copies once they have been imported. */
   release(options: { paths: string[] }): Promise<void>;
+  /** Lets the user choose a folder and copies every supported model file in it (sub-folders included). */
+  pickFolder(): Promise<{ files: IncomingFile[]; failed: number; skipped: number; cancelled: boolean }>;
   addListener(event: 'files', cb: (data: { files: IncomingFile[]; failed: number }) => void): Promise<PluginListenerHandle>;
 }
 
@@ -105,4 +107,10 @@ export async function releaseNative(paths: string[]): Promise<void> {
     if (platform === 'android') await FileIntake.release({ paths });
     else for (const p of paths) await Filesystem.deleteFile({ path: p });
   } catch { /* best effort */ }
+}
+
+/** Android: system folder picker. Resolves with the supported files found in the folder. */
+export async function pickNativeFolder(): Promise<{ files: IncomingFile[]; failed: number; skipped: number; cancelled: boolean }> {
+  const r = await FileIntake.pickFolder();
+  return { files: r.files ?? [], failed: r.failed ?? 0, skipped: r.skipped ?? 0, cancelled: r.cancelled === true };
 }

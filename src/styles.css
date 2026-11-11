@@ -149,18 +149,19 @@ html, body {
   text-overflow: ellipsis;
 }
 
-.compass {
+.viewcube {
   position: absolute;
-  right: calc(8px + var(--sar));
-  top: calc(8px + var(--sat));
-  width: 64px;
-  height: 64px;
+  right: calc(6px + var(--sar));
+  top: calc(6px + var(--sat));
+  width: 136px;
+  height: 136px;
+  touch-action: manipulation;
 }
 
 .grid-label {
   position: absolute;
   right: calc(8px + var(--sar));
-  top: calc(80px + var(--sat));
+  top: calc(146px + var(--sat));
   padding: 4px 8px;
   border-radius: 6px;
   background: rgba(11, 14, 18, 0.8);
@@ -187,7 +188,7 @@ html, body {
 
 .empty {
   position: absolute;
-  inset: 0 0 var(--sheet) 0;
+  inset: 120px 0 var(--sheet) 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -312,7 +313,7 @@ html, body {
   color: var(--text);
 }
 .icon-btn:active { background: var(--panel-2); }
-button:focus-visible, input:focus-visible, .compass:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
+button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
 
 /* ---------- panel ---------- */
 .panel {
@@ -581,7 +582,7 @@ button:focus-visible, input:focus-visible, .compass:focus-visible { outline: 3px
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 0 76px;
+  padding: 0 148px 0 76px;
   pointer-events: none;
 }
 .toast {
@@ -598,8 +599,8 @@ button:focus-visible, input:focus-visible, .compass:focus-visible { outline: 3px
 
 @media (max-height: 420px) {
   .tool { width: 50px; height: 50px; }
-  .compass { width: 52px; height: 52px; }
-  .grid-label { top: calc(66px + var(--sat)); }
+  .viewcube { width: 112px; height: 112px; }
+  .grid-label { top: calc(120px + var(--sat)); }
 }
 @media (prefers-reduced-motion: reduce) {
   .panel, .switch::after { transition: none; }

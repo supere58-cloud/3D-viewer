@@ -15,6 +15,7 @@ import { MeshBVH, acceleratedRaycast, type SerializedBVH } from 'three-mesh-bvh'
 import type { Diagnostics, ParsedLabels, ParsedLayer, ParsedModel, Vec3 } from '../core/types';
 import { CameraRig, Gestures } from './camera';
 import { pickPoints, pickSegments, type ScreenHit } from './pick';
+import { ViewCube } from './viewcube';
 
 export type Opacity = 1 | 0.5 | 0.2;
 export interface LayerSettings { v: boolean; c: number | null; o: Opacity }
@@ -61,7 +62,6 @@ export interface ViewerEvents {
   onContextLost(lost: boolean): void;
 }
 
-export type ViewPreset = 'plan' | 'south' | 'east';
 
 const MIN_LABEL_PX = 9;
 const MAX_LABEL_PX = 30;
@@ -101,7 +101,7 @@ export class Viewer {
   private canvas: HTMLCanvasElement;
   private overlay: HTMLCanvasElement;
   private octx: CanvasRenderingContext2D;
-  private compassCtx: CanvasRenderingContext2D | null;
+  readonly cube: ViewCube | null;
   private headlight = new DirectionalLight(0xffffff, 3.0);
   private raycaster = new Raycaster();
   private sceneOrigin: Vec3 | null = null;
@@ -111,7 +111,6 @@ export class Viewer {
   private gridZ = 0;
   gridEnabled = true;
   labelsEnabled = true;
-  compassLetter = 'N';
   private markerA: Vec3 | null = null;
   private markerB: Vec3 | null = null;
   private frame = 0;
@@ -131,7 +130,7 @@ export class Viewer {
   private labelIdx: number[] = [];
   private labelSize: number[] = [];
 
-  constructor(private container: HTMLElement, compass: HTMLCanvasElement | null, private events: ViewerEvents) {
+  constructor(private container: HTMLElement, cubeCanvas: HTMLCanvasElement | null, private events: ViewerEvents) {
     this.canvas = document.createElement('canvas');
     this.canvas.className = 'gl';
     this.overlay = document.createElement('canvas');
@@ -140,7 +139,7 @@ export class Viewer {
     const octx = this.overlay.getContext('2d');
     if (!octx) throw new Error('2d canvas unavailable');
     this.octx = octx;
-    this.compassCtx = compass ? compass.getContext('2d') : null;
+    this.cube = cubeCanvas ? new ViewCube(cubeCanvas, this.rig, (h, t) => this.lookFrom(h, t), (dh, dt) => this.turn(dh, dt)) : null;
 
     const dpr = window.devicePixelRatio || 1;
     // On dense screens MSAA costs a lot of fill rate and adds little.
@@ -425,16 +424,24 @@ export class Viewer {
     this.requestRender();
   }
 
-  view(preset: ViewPreset): void {
+  /** Looks at the whole model from a given side. heading: compass bearing the camera looks towards; tilt: angle below the horizon. */
+  lookFrom(heading: number, tilt: number): void {
     const b = this.bounds();
-    const to: { heading: number; tilt: number; target?: Vector3; distance?: number } =
-      preset === 'plan' ? { heading: 0, tilt: Math.PI / 2 }
-      : preset === 'south' ? { heading: 0, tilt: 0 }
-      : { heading: (270 * Math.PI) / 180, tilt: 0 };
+    const to: { heading: number; tilt: number; target?: Vector3; distance?: number } = { heading, tilt };
     if (b) {
       to.target = new Vector3().addVectors(b.min, b.max).multiplyScalar(0.5);
       to.distance = this.rig.fitDistance(Math.max(0.5, b.min.distanceTo(b.max) / 2));
     }
+    this.rig.animateTo(to);
+    this.requestRender();
+  }
+
+  /** Turns the view by a step around the current pivot, snapping to whole steps. */
+  turn(dHeading: number, dTilt: number): void {
+    const s = this.rig.state;
+    const to: { heading?: number; tilt?: number } = {};
+    if (dHeading !== 0) to.heading = Math.round((s.heading + dHeading) / Math.abs(dHeading)) * Math.abs(dHeading);
+    if (dTilt !== 0) to.tilt = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, Math.round((s.tilt + dTilt) / Math.abs(dTilt)) * Math.abs(dTilt)));
     this.rig.animateTo(to);
     this.requestRender();
   }
@@ -484,7 +491,7 @@ export class Viewer {
     this.renderer.render(this.scene, rig.camera);
     this.viewProj.multiplyMatrices(rig.camera.projectionMatrix, rig.camera.matrixWorldInverse);
     this.drawOverlay();
-    this.drawCompass();
+    this.cube?.draw();
     // Drop to a lower resolution while moving if the device cannot keep up.
     if (this.interacting && !this.lowRes) {
       const ms = performance.now() - t0;
@@ -666,57 +673,6 @@ export class Viewer {
     };
     dot(a, B ? '1' : '');
     if (B) dot(b, '2');
-  }
-
-  private drawCompass(): void {
-    const ctx = this.compassCtx;
-    if (!ctx) return;
-    const cv = ctx.canvas;
-    const css = cv.clientWidth || 64;
-    const dpr = Math.min(window.devicePixelRatio || 1, 3);
-    if (cv.width !== Math.round(css * dpr)) { cv.width = Math.round(css * dpr); cv.height = cv.width; }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, css, css);
-    const c = css / 2, R = c - 3;
-    ctx.fillStyle = 'rgba(11,14,18,0.78)';
-    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(c, c, R, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    // North on screen: (north . right, north . up).
-    const nx = this.rig.right.y, ny = this.rig.up.y;
-    const len = Math.hypot(nx, ny);
-    if (len < 0.08) {
-      // Looking along the north-south line: north points into or out of the screen.
-      ctx.fillStyle = '#ff5a3d';
-      ctx.beginPath(); ctx.arc(c, c, 5, 0, Math.PI * 2); ctx.fill();
-      return;
-    }
-    const ux = nx / len, uy = -ny / len;
-    const L = R * (0.42 + 0.3 * len);
-    const px = -uy, py = ux;
-    const wid = R * 0.26;
-    ctx.fillStyle = '#ff5a3d';
-    ctx.beginPath();
-    ctx.moveTo(c + ux * L, c + uy * L);
-    ctx.lineTo(c + px * wid, c + py * wid);
-    ctx.lineTo(c - px * wid, c - py * wid);
-    ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#e8edf2';
-    ctx.beginPath();
-    ctx.moveTo(c - ux * L, c - uy * L);
-    ctx.lineTo(c + px * wid, c + py * wid);
-    ctx.lineTo(c - px * wid, c - py * wid);
-    ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.font = `700 ${Math.round(R * 0.36)}px system-ui, -apple-system, Roboto, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = 3;
-    const tx = c + ux * (R * 0.8), ty = c + uy * (R * 0.8);
-    ctx.strokeText(this.compassLetter, tx, ty);
-    ctx.fillText(this.compassLetter, tx, ty);
-    ctx.textAlign = 'start';
   }
 
   // --- picking -----------------------------------------------------------
