@@ -8,13 +8,13 @@
  */
 import {
   AmbientLight, BufferAttribute, BufferGeometry, Color, DirectionalLight, DoubleSide, Group, LineBasicMaterial,
-  LineSegments, Matrix4, Mesh, MeshLambertMaterial, Points, PointsMaterial, Raycaster, Scene, Vector2, Vector3,
+  LineSegments, Matrix4, Mesh, MeshLambertMaterial, Plane, Points, PointsMaterial, Raycaster, Scene, Vector2, Vector3,
   WebGLRenderer, type Intersection,
 } from 'three';
 import { MeshBVH, acceleratedRaycast, type SerializedBVH } from 'three-mesh-bvh';
 import type { Diagnostics, ParsedLabels, ParsedLayer, ParsedModel, Vec3 } from '../core/types';
 import { CameraRig, Gestures } from './camera';
-import { pickPoints, pickSegments, type ScreenHit } from './pick';
+import { pickPoints, pickSegments, type ScreenHit, type Slab } from './pick';
 import { ViewCube } from './viewcube';
 
 export type Opacity = 1 | 0.5 | 0.2;
@@ -54,6 +54,15 @@ export interface PickResult {
   kind: PickKind;
   layer: string;
   file: string;
+}
+
+/** A slice: only geometry within thickness/2 of the plane through `point` is shown. */
+export interface SlicePlane {
+  /** Unit normal. */
+  normal: Vec3;
+  /** A point on the plane, true coordinates. */
+  point: Vec3;
+  thickness: number;
 }
 
 export interface ViewerEvents {
@@ -114,6 +123,9 @@ export class Viewer {
   private markerA: Vec3 | null = null;
   private markerB: Vec3 | null = null;
   private pins: { p: Vec3; label: string }[] = [];
+  private slice: SlicePlane | null = null;
+  /** The two faces of the active slice, in scene coordinates; shared by every model material. */
+  private clipPlanes = [new Plane(), new Plane()];
   private frame = 0;
   private dirty = false;
   private paused = false;
@@ -149,6 +161,7 @@ export class Viewer {
     this.renderer.setClearColor(BACKGROUND, 1);
     this.pixelRatio = Math.min(dpr, 2);
     this.renderer.setPixelRatio(this.pixelRatio);
+    this.renderer.localClippingEnabled = true;
 
     this.scene.add(new AmbientLight(0xffffff, 0.5));
     this.scene.add(this.headlight, this.headlight.target);
@@ -247,6 +260,7 @@ export class Viewer {
   addFile(id: string, name: string, model: ParsedModel, saved: Record<string, LayerSettings> | null): ViewFile {
     const first = this.files.length === 0;
     if (!this.sceneOrigin) this.sceneOrigin = [...model.origin];
+    this.updateClipPlanes();
     const so = this.sceneOrigin;
     const group = new Group();
     group.position.set(model.origin[0] - so[0], model.origin[1] - so[1], model.origin[2] - so[2]);
@@ -333,6 +347,7 @@ export class Viewer {
       if (!obj) continue;
       obj.visible = layer.visible;
       const mat = obj.material;
+      mat.clippingPlanes = this.slice ? this.clipPlanes : null;
       const useVertex = layer.customColor === null && obj.geometry.hasAttribute('color');
       if (mat.vertexColors !== useVertex) {
         mat.vertexColors = useVertex;
@@ -479,6 +494,50 @@ export class Viewer {
     this.rig.zoomFree = !(hit && so && this.rig.anchorAt(this.tmp.set(hit.point[0] - so[0], hit.point[1] - so[1], hit.point[2] - so[2]).clone()));
   }
 
+  /**
+   * Shows only a slab of the model (a section), or everything when null.
+   * Done with GPU clip planes on the model materials: no geometry is rebuilt,
+   * so moving the slice is free.
+   */
+  setSlice(slice: SlicePlane | null): void {
+    const had = this.slice !== null;
+    this.slice = slice;
+    this.updateClipPlanes();
+    if (had !== (slice !== null)) {
+      for (const f of this.files) for (const l of f.layers) this.applyLayer(l);
+    }
+    this.requestRender();
+  }
+
+  private updateClipPlanes(): void {
+    const s = this.slice, so = this.sceneOrigin;
+    if (!s || !so) return;
+    const n = this.tmp.set(s.normal[0], s.normal[1], s.normal[2]);
+    const c = n.x * (s.point[0] - so[0]) + n.y * (s.point[1] - so[1]) + n.z * (s.point[2] - so[2]);
+    const half = s.thickness / 2;
+    // Plane keeps points where normal . p + constant >= 0.
+    this.clipPlanes[0].normal.copy(n);
+    this.clipPlanes[0].constant = -(c - half);
+    this.clipPlanes[1].normal.copy(n).negate();
+    this.clipPlanes[1].constant = c + half;
+  }
+
+  /** The active slice as a slab in the local coordinates of an object placed at `offset` in the scene. */
+  private slabFor(offset: Vector3): Slab | null {
+    const s = this.slice, so = this.sceneOrigin;
+    if (!s || !so) return null;
+    const [nx, ny, nz] = s.normal;
+    const c = nx * (s.point[0] - so[0] - offset.x) + ny * (s.point[1] - so[1] - offset.y) + nz * (s.point[2] - so[2] - offset.z);
+    return { nx, ny, nz, c, half: s.thickness / 2 };
+  }
+
+  /** Centre of the loaded models in true coordinates. */
+  centerTrue(): Vec3 | null {
+    const b = this.bounds(), so = this.sceneOrigin;
+    if (!b || !so) return null;
+    return [(b.min.x + b.max.x) / 2 + so[0], (b.min.y + b.max.y) / 2 + so[1], (b.min.z + b.max.z) / 2 + so[2]];
+  }
+
   /** Note pins: true-coordinate points with a short label, drawn over the model. */
   setPins(pins: { p: Vec3; label: string }[]): void {
     this.pins = pins;
@@ -578,6 +637,10 @@ export class Viewer {
     const dpr = this.overlay.width / this.width;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, this.width, this.height);
+    // A frame that only clears is not always repainted by the browser, which
+    // leaves old markers on screen. One almost invisible pixel forces it.
+    ctx.fillStyle = 'rgba(0,0,0,0.01)';
+    ctx.fillRect(0, 0, 1, 1);
     if (this.labelsEnabled) this.drawLabels(ctx);
     this.drawMarkers(ctx);
   }
@@ -596,12 +659,17 @@ export class Viewer {
       const n = lab.text.length;
       if (n === 0 || !file.visible) continue;
       const m = this.mvp.multiplyMatrices(this.viewProj, file.group.matrixWorld).elements;
+      const slab = this.slabFor(file.group.position);
       const idx = this.labelIdx, size = this.labelSize;
       idx.length = 0; size.length = 0;
       const pos = lab.pos, hgt = lab.height, lay = lab.layer;
       for (let i = 0; i < n; i++) {
         if (!file.layers[lay[i]].visible) continue;
         const x = pos[i * 3], y = pos[i * 3 + 1], z = pos[i * 3 + 2];
+        if (slab) {
+          const d = slab.nx * x + slab.ny * y + slab.nz * z - slab.c;
+          if (d > slab.half || d < -slab.half) continue;
+        }
         const w = m[3] * x + m[7] * y + m[11] * z + m[15];
         if (w <= 0) continue;
         const px = ((hgt[i] || 1) * scale) / w;
@@ -655,7 +723,12 @@ export class Viewer {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.lineWidth = 2;
+      const pinSlab = this.slabFor(this.tmp.set(0, 0, 0));
       for (const pin of this.pins) {
+        if (pinSlab) {
+          const d = pinSlab.nx * (pin.p[0] - so[0]) + pinSlab.ny * (pin.p[1] - so[1]) + pinSlab.nz * (pin.p[2] - so[2]) - pinSlab.c;
+          if (d > pinSlab.half || d < -pinSlab.half) continue;
+        }
         this.project(pin.p[0] - so[0], pin.p[1] - so[1], pin.p[2] - so[2], m, a);
         if (a.w <= 0 || a.x < -20 || a.x > this.width + 20 || a.y < -20 || a.y > this.height + 20) continue;
         // A small flag standing on the point.
@@ -736,7 +809,14 @@ export class Viewer {
     if (rig.ortho) this.raycaster.near = -1e9;
     else this.raycaster.near = 0;
     let surface: Intersection | null = null;
+    // With a slice on, the nearest hit may lie in the hidden part: take the nearest visible one.
+    const sceneSlab = this.slabFor(new Vector3());
+    this.raycaster.firstHitOnly = sceneSlab === null;
     for (const hit of this.raycaster.intersectObjects(meshes, false)) {
+      if (sceneSlab) {
+        const d = sceneSlab.nx * hit.point.x + sceneSlab.ny * hit.point.y + sceneSlab.nz * hit.point.z - sceneSlab.c;
+        if (d > sceneSlab.half || d < -sceneSlab.half) continue;
+      }
       if (!surface || hit.distance < surface.distance) surface = hit;
     }
 
@@ -775,6 +855,7 @@ export class Viewer {
     for (const file of this.files) {
       if (!file.visible) continue;
       const m = this.mvp.multiplyMatrices(this.viewProj, file.group.matrixWorld).elements;
+      const slab = this.slabFor(file.group.position);
       for (const layer of file.layers) {
         if (!layer.visible) continue;
         const consider = (hit: ScreenHit | null, kind: PickKind): void => {
@@ -789,11 +870,11 @@ export class Viewer {
         };
         if (layer.lines) {
           const pos = (layer.lines.geometry.getAttribute('position') as BufferAttribute).array as Float32Array;
-          consider(pickSegments(pos, m, this.width, this.height, x, y, radius, snap), 'line');
+          consider(pickSegments(pos, m, this.width, this.height, x, y, radius, snap, slab), 'line');
         }
         if (layer.points) {
           const pos = (layer.points.geometry.getAttribute('position') as BufferAttribute).array as Float32Array;
-          consider(pickPoints(pos, m, this.width, this.height, x, y, radius), 'vertex');
+          consider(pickPoints(pos, m, this.width, this.height, x, y, radius, slab), 'vertex');
         }
       }
     }

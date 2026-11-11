@@ -367,7 +367,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); ou
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.wide .tab { font-size: 14px; }
+.wide .tab { font-size: 13px; padding: 0 2px; }
 .tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
 .panel-body {
   flex: 1 1 auto;
@@ -657,3 +657,60 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); ou
 
 #app:not(.wide) .m-actions .btn { font-size: 12.5px; padding: 0 2px; }
 .row-actions.compact .btn { font-size: 14px; padding: 0 8px; gap: 6px; }
+
+/* ---------- sections ---------- */
+.slicebar {
+  position: absolute;
+  left: calc(72px + var(--sal));
+  right: calc(8px + var(--sar));
+  bottom: calc(var(--sheet) + 8px);
+  max-width: 460px;
+  margin-left: auto;
+  padding: 6px 8px;
+  border-radius: 12px;
+  background: rgba(20, 25, 32, 0.96);
+  border: 1.5px solid var(--accent);
+}
+.wide .slicebar { bottom: calc(8px + var(--sab)); }
+.slice-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 0 4px; }
+.slice-title b { font-variant-numeric: tabular-nums; }
+.slice-title span { color: var(--muted); font-size: 13px; }
+.slice-buttons { display: flex; justify-content: space-between; }
+.slice-buttons .icon-btn { flex: 1 1 0; max-width: 64px; }
+.measure { bottom: calc(var(--sheet) + 8px + var(--slicebar, 0px)); }
+.wide .measure { bottom: calc(8px + var(--sab) + var(--slicebar, 0px)); }
+.slice-row.on { background: rgba(255, 212, 0, 0.12); }
+.small { font-size: 13.5px; }
+.btn[disabled] { opacity: 0.45; }
+
+/* ---------- tutorial ---------- */
+.tour {
+  position: absolute;
+  left: 50%;
+  bottom: calc(76px + var(--sab));
+  transform: translateX(-50%);
+  width: min(430px, calc(100% - 20px));
+  z-index: 41;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 2px solid var(--accent);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+}
+.tour.top { top: calc(10px + var(--sat)); bottom: auto; }
+.tour.center { top: 50%; bottom: auto; transform: translate(-50%, -50%); }
+.tour h2 { margin: 2px 0 6px; font-size: 19px; }
+.tour p { margin: 0 0 6px; font-size: 15px; }
+.tour-count { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.tour-actions { display: flex; gap: 8px; margin-top: 10px; }
+.tour-actions .btn { flex: 1 1 0; padding: 0 8px; }
+.tour-ring {
+  position: absolute;
+  z-index: 40;
+  border: 3px solid var(--accent);
+  border-radius: 14px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.32);
+  pointer-events: none;
+  transition: left 0.15s, top 0.15s, width 0.15s, height 0.15s;
+}
+.privacy p { margin: 0; font-size: 15px; }

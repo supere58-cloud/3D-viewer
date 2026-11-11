@@ -4,6 +4,9 @@
  * segments) and needs no extra index memory.
  */
 
+/** A slab |n.p - c| <= half in the same local coordinates as the positions; hits outside are ignored. */
+export interface Slab { nx: number; ny: number; nz: number; c: number; half: number }
+
 export interface ScreenHit {
   /** Distance from the tap in CSS pixels. */
   px: number;
@@ -21,7 +24,7 @@ const EPS_W = 1e-6;
  */
 export function pickSegments(
   pos: Float32Array, mvp: ArrayLike<number>, width: number, height: number,
-  tapX: number, tapY: number, radius: number, snapRadius: number,
+  tapX: number, tapY: number, radius: number, snapRadius: number, slab: Slab | null = null,
 ): ScreenHit | null {
   const m0 = mvp[0], m1 = mvp[1], m3 = mvp[3], m4 = mvp[4], m5 = mvp[5], m7 = mvp[7];
   const m8 = mvp[8], m9 = mvp[9], m11 = mvp[11], m12 = mvp[12], m13 = mvp[13], m15 = mvp[15];
@@ -56,12 +59,16 @@ export function pickSegments(
     const ex = sax + dx * u - tapX, ey = say + dy * u - tapY;
     const d2 = ex * ex + ey * ey;
     if (d2 < best) {
-      best = d2;
-      bestI = i;
       // Screen-space parameter to perspective-correct parameter.
       const denom = (1 - u) * bw + u * aw;
-      const t = denom > 0 ? (u * aw) / denom : u;
-      bestT = t0 + (t1 - t0) * t;
+      const t = t0 + (t1 - t0) * (denom > 0 ? (u * aw) / denom : u);
+      if (slab) {
+        const d = slab.nx * (ax + (bx - ax) * t) + slab.ny * (ay + (by - ay) * t) + slab.nz * (az + (bz - az) * t) - slab.c;
+        if (d > slab.half || d < -slab.half) continue;
+      }
+      best = d2;
+      bestI = i;
+      bestT = t;
     }
   }
   if (bestI < 0) return null;
@@ -79,9 +86,14 @@ export function pickSegments(
   const db = project(pos[i + 3], pos[i + 4], pos[i + 5]);
   let px = Math.sqrt(best);
   if (Math.min(da, db) <= snapRadius) {
-    vertex = true;
-    t = da <= db ? 0 : 1;
-    px = Math.min(da, db);
+    const end = da <= db ? 0 : 3;
+    const d = slab ? slab.nx * pos[i + end] + slab.ny * pos[i + end + 1] + slab.nz * pos[i + end + 2] - slab.c : 0;
+    // Only snap to an end that is itself inside the slice.
+    if (!slab || (d <= slab.half && d >= -slab.half)) {
+      vertex = true;
+      t = end === 0 ? 0 : 1;
+      px = Math.min(da, db);
+    }
   }
   return {
     px, vertex,
@@ -94,7 +106,7 @@ export function pickSegments(
 /** Closest vertex of `pos` (xyz triples) within `radius` pixels, or null. */
 export function pickPoints(
   pos: Float32Array, mvp: ArrayLike<number>, width: number, height: number,
-  tapX: number, tapY: number, radius: number,
+  tapX: number, tapY: number, radius: number, slab: Slab | null = null,
 ): ScreenHit | null {
   const m0 = mvp[0], m1 = mvp[1], m3 = mvp[3], m4 = mvp[4], m5 = mvp[5], m7 = mvp[7];
   const m8 = mvp[8], m9 = mvp[9], m11 = mvp[11], m12 = mvp[12], m13 = mvp[13], m15 = mvp[15];
@@ -108,7 +120,14 @@ export function pickPoints(
     const ex = ((m0 * x + m4 * y + m8 * z + m12) / w + 1) * hw - tapX;
     const ey = (1 - (m1 * x + m5 * y + m9 * z + m13) / w) * hh - tapY;
     const d2 = ex * ex + ey * ey;
-    if (d2 < best) { best = d2; bestI = i; }
+    if (d2 < best) {
+      if (slab) {
+        const d = slab.nx * x + slab.ny * y + slab.nz * z - slab.c;
+        if (d > slab.half || d < -slab.half) continue;
+      }
+      best = d2;
+      bestI = i;
+    }
   }
   if (bestI < 0) return null;
   return { px: Math.sqrt(best), vertex: true, x: pos[bestI], y: pos[bestI + 1], z: pos[bestI + 2] };

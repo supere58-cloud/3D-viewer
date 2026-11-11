@@ -11,8 +11,12 @@ import { exportTextFile } from '../platform/export';
 import { measure } from './measure';
 import { notesToCsv, notesToTsv, type Note, type NoteHeaders } from './notes';
 import { Panel } from './panel';
+import { azimuthBetween, changeThickness, moveSlice, nearestThickness, slicePlane, type Slice } from './slices';
+import { Tour, type TourStep } from './tutorial';
+import { demoDxf } from '../core/demo';
 
-type QueueItem = LoadSource & { nativePath?: string };
+type QueueItem = LoadSource & { nativePath?: string; /** The built-in tutorial model: not kept, not listed in Recent. */ demo?: boolean };
+const DEMO_KEY = 'demo|0';
 
 export class App {
   private settings: Settings = store.loadSettings();
@@ -45,6 +49,13 @@ export class App {
   private keys = new Map<ViewFile, string>();
   private nextId = 1;
   private notes: Note[] = store.notes();
+  private slices: Slice[] = store.slices();
+  private activeSlice: string | null = null;
+  private sliceBar!: HTMLElement;
+  private tour: Tour | null = null;
+  private demoFile: ViewFile | null = null;
+  private tourSlice: string | null = null;
+  private pumping: Promise<void> | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -62,6 +73,8 @@ export class App {
       else this.viewer?.resume();
     });
     this.setupWebFileHandling();
+    // First run: offer the walkthrough (can be switched off in Settings).
+    if (this.settings.tutorial && this.viewer) window.setTimeout(() => { if (this.queue.length === 0 && this.viewer?.files.length === 0) this.startTutorial(); }, 300);
   }
 
   // --- construction ------------------------------------------------------
@@ -86,12 +99,13 @@ export class App {
     const compass = h('canvas', { class: 'viewcube', role: 'img' });
     this.gridLabel = h('div', { class: 'grid-label' });
     this.measureCard = h('div', { class: 'measure', hidden: true });
+    this.sliceBar = h('div', { class: 'slicebar', hidden: true });
     this.empty = h('div', { class: 'empty' });
     this.toolbar = h('div', { class: 'toolbar' });
     this.banner = h('div', { class: 'banner', hidden: true, role: 'status' });
     const stage = h('div', { class: 'stage' });
     this.toasts = h('div', { class: 'toasts', 'aria-live': 'polite' });
-    this.viewport = h('main', { class: 'viewport' }, stage, this.toolbar, compass, this.gridLabel, this.empty, this.measureCard, this.banner, this.toasts);
+    this.viewport = h('main', { class: 'viewport' }, stage, this.toolbar, compass, this.gridLabel, this.empty, this.sliceBar, this.measureCard, this.banner, this.toasts);
 
     this.panel = new Panel({
       viewer: () => this.viewer,
@@ -102,6 +116,13 @@ export class App {
       openRecent: (r) => void this.openRecent(r),
       loadedKeys: () => new Set(this.keys.values()),
       layerChanged: (file) => this.persistLayers(file),
+      slices: () => this.slices,
+      activeSlice: () => this.activeSlice,
+      sliceLabel: (s) => this.sliceLabel(s),
+      addSlice: (kind) => this.addSlice(kind),
+      toggleSlice: (id) => this.setActiveSlice(this.activeSlice === id ? null : id),
+      deleteSlice: (id) => this.deleteSlice(id),
+      startTutorial: () => this.startTutorial(),
       notes: () => this.notes,
       addNote: () => this.addNote(null),
       updateNote: (id, text) => this.updateNote(id, text),
@@ -194,6 +215,7 @@ export class App {
     this.viewport.querySelector('.viewcube')?.setAttribute('aria-label', t('cube.label'));
     this.renderGridLabel();
     this.renderMeasure();
+    this.renderSliceBar();
     this.panel.render();
     this.syncEmpty();
     v?.requestRender();
@@ -236,6 +258,7 @@ export class App {
 
   private handleBack(): boolean {
     if (!this.busy.hidden) { this.cancelLoading(); return true; }
+    if (this.tour?.active) { this.tour.stop(false); return true; }
     return this.panel.back();
   }
 
@@ -335,6 +358,152 @@ export class App {
       h('button', { class: 'btn', type: 'button', onclick: () => this.clearMeasure() }, icon('close'), t('m.clear'))));
   }
 
+  // --- sections ----------------------------------------------------------
+  private sliceLabel(s: Slice): string {
+    return s.kind === 'h' ? t('slice.name.h', { z: fmt(s.point[2]) }) : t('slice.name.v', { az: fmt(s.azimuth, 0) });
+  }
+
+  private currentSlice(): Slice | null {
+    return this.slices.find((s) => s.id === this.activeSlice) ?? null;
+  }
+
+  /**
+   * New section through the picked point (or the model centre). A vertical
+   * one follows the line between the two picked points when there are two.
+   */
+  private addSlice(kind: 'h' | 'v'): string | null {
+    const v = this.viewer;
+    const base = this.pickB?.point ?? this.pickA?.point ?? v?.centerTrue();
+    if (!v || !base) { this.toast(t('slice.needModel')); return null; }
+    let azimuth = 90;
+    let point: Vec3 = [...base];
+    if (kind === 'v' && this.pickA && this.pickB) {
+      const az = azimuthBetween(this.pickA.point, this.pickB.point);
+      if (az !== null) { azimuth = az; point = [...this.pickA.point]; }
+    }
+    const slice: Slice = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      kind, point, azimuth: kind === 'h' ? 0 : azimuth,
+      thickness: nearestThickness(v.rig.sceneRadius * 0.04),
+    };
+    this.slices.push(slice);
+    this.setActiveSlice(slice.id);
+    return slice.id;
+  }
+
+  private setActiveSlice(id: string | null): void {
+    this.activeSlice = id;
+    this.applySlice();
+    this.panel.render();
+  }
+
+  private deleteSlice(id: string): void {
+    this.slices = this.slices.filter((s) => s.id !== id);
+    if (this.activeSlice === id) this.activeSlice = null;
+    this.applySlice();
+    this.panel.render();
+  }
+
+  /** Pushes the active section to the view and saves the list. */
+  private applySlice(): void {
+    const s = this.currentSlice();
+    this.viewer?.setSlice(s ? slicePlane(s) : null);
+    store.saveSlices(this.slices.filter((x) => x.id !== this.tourSlice));
+    this.renderSliceBar();
+  }
+
+  private faceSlice(): void {
+    const s = this.currentSlice(), v = this.viewer;
+    if (!s || !v) return;
+    if (s.kind === 'h') { v.lookFrom(0, Math.PI / 2); return; }
+    // Look square at the section, from whichever side is nearer to the current view.
+    const a = ((s.azimuth + 90) * Math.PI) / 180;
+    const diff = Math.abs((((v.rig.state.heading - a) % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI) - Math.PI);
+    v.lookFrom(diff < Math.PI / 2 ? a : a + Math.PI, 0);
+  }
+
+  private renderSliceBar(): void {
+    const bar = this.sliceBar;
+    const s = this.currentSlice();
+    clear(bar);
+    bar.hidden = !s;
+    this.viewport.style.setProperty('--slicebar', s ? '104px' : '0px');
+    if (!s) return;
+    const btn = (name: string, label: string, fn: () => void): HTMLElement =>
+      h('button', { class: 'icon-btn', type: 'button', title: label, 'aria-label': label, onclick: fn }, icon(name));
+    const change = (fn: (s: Slice) => void): void => { fn(s); this.applySlice(); this.panel.render(); };
+    bar.append(
+      h('div', { class: 'slice-title' }, h('b', { text: this.sliceLabel(s) }), h('span', { text: t('slice.thickness', { n: s.thickness }) })),
+      h('div', { class: 'slice-buttons' },
+        btn('prev', t('slice.prev'), () => change((x) => moveSlice(x, -1))),
+        btn('next', t('slice.next'), () => change((x) => moveSlice(x, 1))),
+        btn('minus', t('slice.thinner'), () => change((x) => changeThickness(x, -1))),
+        btn('plus', t('slice.thicker'), () => change((x) => changeThickness(x, 1))),
+        btn('eye', t('slice.face'), () => this.faceSlice()),
+        btn('close', t('slice.off'), () => this.setActiveSlice(null))));
+  }
+
+  // --- tutorial ----------------------------------------------------------
+  startTutorial(): void {
+    if (!this.viewer || this.tour?.active) return;
+    const v = this.viewer;
+    const steps: TourStep[] = [
+      { key: 'welcome' },
+      { key: 'open', target: '.toolbar' },
+      { key: 'move', enter: async () => { this.panel.peek(); await this.ensureDemo(); } },
+      { key: 'cube', target: '.viewcube', enter: () => this.ensureDemo() },
+      { key: 'measure', target: '.measure', enter: async () => {
+        await this.ensureDemo();
+        this.panel.peek();
+        this.clearMeasure();
+        // Two taps on the model, as the user would make them.
+        for (const [fx, fy] of [[0.42, 0.42], [0.6, 0.52]]) this.onPick(v.pick(v.rig.width * fx, v.rig.height * fy, true));
+      } },
+      { key: 'notes', target: '.panel', enter: () => this.panel.show('notes') },
+      { key: 'layers', target: '.panel', enter: () => { this.clearMeasure(); this.panel.show('layers'); } },
+      { key: 'slices', target: '.slicebar', enter: async () => {
+        await this.ensureDemo();
+        this.clearMeasure();
+        this.panel.peek();
+        if (!this.tourSlice) {
+          this.tourSlice = this.addSlice('v');
+          const s = this.currentSlice();
+          if (s) { s.thickness = nearestThickness(v.rig.sceneRadius * 0.12); this.applySlice(); }
+        } else this.setActiveSlice(this.tourSlice);
+      } },
+      { key: 'files', target: '.panel', enter: () => { this.dropTourSlice(); this.panel.show('files'); } },
+      { key: 'done', enter: () => this.panel.peek() },
+    ];
+    this.tour = new Tour(this.root, steps, () => {
+      this.dropTourSlice();
+      this.clearMeasure();
+      if (this.demoFile) this.closeFile(this.demoFile);
+      this.demoFile = null;
+      this.panel.peek();
+      if (this.settings.tutorial) this.updateSettings({ tutorial: false });
+    });
+    this.tour.start();
+  }
+
+  private dropTourSlice(): void {
+    if (!this.tourSlice) return;
+    const id = this.tourSlice;
+    this.tourSlice = null;
+    this.deleteSlice(id);
+  }
+
+  /** Loads the built-in demo model unless the user already has something open. */
+  private async ensureDemo(): Promise<void> {
+    if (!this.viewer || this.viewer.files.length > 0) return;
+    const text = demoDxf({
+      pit: t('tour.layer.pit'), ore: t('tour.layer.ore'), holes: t('tour.layer.holes'),
+      contours: t('tour.layer.contours'), labels: t('tour.layer.labels'), hole: t('tour.hole'),
+    });
+    const file = new File([text], t('tour.demoName') + '.dxf');
+    this.enqueue([{ kind: 'file', name: file.name, size: file.size, file, demo: true }]);
+    await this.pumping;
+  }
+
   // --- notes -------------------------------------------------------------
   private noteHeaders(): NoteHeaders {
     return { n: t('notes.col.n'), date: t('notes.col.date'), x: 'X', y: 'Y', z: 'Z', layer: t('notes.col.layer'), file: t('notes.col.file'), note: t('notes.col.note') };
@@ -392,7 +561,7 @@ export class App {
   }
 
   private saveSession(): void {
-    store.saveSession([...this.keys.values()]);
+    store.saveSession([...this.keys.values()].filter((k) => k !== DEMO_KEY));
   }
 
   // --- opening files -----------------------------------------------------
@@ -441,7 +610,7 @@ export class App {
     if (items.length === 0 || !this.viewer) return;
     this.queue.push(...items);
     this.queueTotal += items.length;
-    if (!this.current) void this.pump();
+    if (!this.pumping) this.pumping = this.pump().finally(() => { this.pumping = null; });
   }
 
   private cancelLoading(): void {
@@ -457,8 +626,8 @@ export class App {
     while (this.queue.length > 0) {
       const item = this.queue.shift() as QueueItem;
       this.queueDone++;
-      const key = fileKey(item.name, item.size);
-      const keep = this.settings.keepCopies && privateStorageAvailable() && formatFromName(item.name) !== null;
+      const key = item.demo ? DEMO_KEY : fileKey(item.name, item.size);
+      const keep = !item.demo && this.settings.keepCopies && privateStorageAvailable() && formatFromName(item.name) !== null;
       const storeAs = item.kind === 'stored' ? null : keep ? storeName(key) : null;
       this.showBusy(item.name, 'read', 0);
       try {
@@ -469,7 +638,8 @@ export class App {
         const file = viewer.addFile('f' + this.nextId++, item.name, model, store.layerSettings(key));
         this.keys.set(file, key);
         lastLoaded = file;
-        store.touchRecent({
+        if (item.demo) this.demoFile = file;
+        else store.touchRecent({
           key, name: item.name, size: item.size, ts: Date.now(),
           store: item.kind === 'stored' ? item.store : stored ? storeAs : null,
         });
@@ -507,6 +677,8 @@ export class App {
     this.keys.delete(file);
     this.viewer?.removeFile(file);
     if (this.pickA?.file === file.name || this.pickB?.file === file.name || this.viewer?.files.length === 0) this.clearMeasure();
+    if (file === this.demoFile) this.demoFile = null;
+    if (this.viewer?.files.length === 0 && this.activeSlice) { this.activeSlice = null; this.applySlice(); }
     if (rerender) {
       this.saveSession();
       this.syncEmpty();

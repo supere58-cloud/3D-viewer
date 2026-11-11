@@ -58,6 +58,20 @@ purple layers stay visible as well as white, yellow and cyan ones.
   true X / Y / Z to two decimals, the layer and the source file. A second tap
   adds 3D distance, horizontal distance, ΔZ, azimuth (clockwise from north) and
   dip (negative = downwards). **Копировать** copies it all as text.
+- **Sections** (Разрезы tab): a section shows only a slab of the model so you
+  can look inside. **Горизонтальный** makes a level plan through the picked
+  point (or the model centre). **Вертикальный** runs through the two points
+  you tapped, for example two vertices of an existing line, or west–east when
+  nothing is picked. While a section is on, a bar gives ◀ ▶ to page through
+  sections by one thickness, − + to change the thickness, an eye to face the
+  section and ✕ to turn it off. Taps, labels and note pins only see what the
+  section shows. Sections are remembered. It is done with GPU clip planes, so
+  it costs nothing extra to draw.
+- **Tutorial**: offered on first start; it walks through the features on a
+  built-in demo model and closes it afterwards. Switch it on or off, or run it
+  again, in Settings (gear icon).
+- **Privacy policy**: Settings → Политика конфиденциальности; the same text is
+  in [PRIVACY.md](PRIVACY.md).
 - **Notes**: after tapping a point, **Заметка** adds a note tied to its
   X / Y / Z, layer and file; it shows as a numbered orange pin in the model. The
   Notes tab also takes general notes without a point. **Таблица (CSV)** saves
@@ -387,6 +401,8 @@ first contact with real hardware and real data.
   real-world coordinates.
 - Geometry further than about 65 km from the main model in the same file loses
   precision and is flagged in Diagnostics.
+- A section shows the slab of surfaces as they are; it does not draw a
+  filled cut face or a cut outline.
 - Transparent layers are not depth-sorted per triangle.
 - Layer settings are keyed by file name and size; a re-export of the same size
   and name inherits them.

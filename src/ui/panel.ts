@@ -5,10 +5,11 @@ import { store, type RecentFile, type Settings } from '../platform/storage';
 import type { Opacity, Viewer, ViewFile, ViewLayer } from '../viewer/viewer';
 import { clear, copyText, fmt, fmtBytes, fmtCount, h, icon } from './dom';
 import { formatDate, type Note } from './notes';
+import type { Slice } from './slices';
 
 declare const __APP_VERSION__: string;
 
-export type Tab = 'layers' | 'files' | 'notes' | 'diag' | 'settings';
+export type Tab = 'layers' | 'files' | 'notes' | 'slices' | 'diag' | 'settings';
 type Sheet = 'peek' | 'half' | 'full';
 
 export interface PanelDeps {
@@ -31,13 +32,22 @@ export interface PanelDeps {
   gotoNote(note: Note): void;
   exportNotes(): void;
   copyNotes(): void;
+  slices(): Slice[];
+  activeSlice(): string | null;
+  sliceLabel(s: Slice): string;
+  addSlice(kind: 'h' | 'v'): void;
+  toggleSlice(id: string): void;
+  deleteSlice(id: string): void;
+  startTutorial(): void;
 }
 
 const SWATCHES = [
   0xffffff, 0xffd400, 0xff9500, 0xff3b30, 0xff5ad1, 0xb07bff, 0x4da3ff, 0x00e5ff, 0x3dffb8, 0x7dff5a, 0xc8ff00, 0x9aa5b1,
 ];
 const PEEK = 60;
-const TABS: Tab[] = ['layers', 'files', 'notes', 'diag', 'settings'];
+const TABS: Tab[] = ['layers', 'files', 'notes', 'slices', 'diag', 'settings'];
+/** Tabs shown as an icon only, to keep the bar readable on a phone. */
+const ICON_TABS: Partial<Record<Tab, string>> = { diag: 'info', settings: 'gear' };
 
 export class Panel {
   readonly el: HTMLElement;
@@ -111,6 +121,13 @@ export class Panel {
     }
   }
 
+  /** Folds the bottom sheet down to its tab bar (no effect on the side panel). */
+  peek(): void {
+    if (this.wide || this.sheet === 'peek') return;
+    this.sheet = 'peek';
+    this.applySheet();
+  }
+
   /** Android back button. Returns true if something was closed. */
   back(): boolean {
     if (this.dialog) { this.closeDialog(); return true; }
@@ -158,8 +175,9 @@ export class Panel {
       const b = h('button', { class: 'tab', type: 'button', role: 'tab', 'aria-selected': String(tab === this.tab), onclick: () => {
         if (this.tab === tab && !this.wide && this.sheet !== 'peek') { this.sheet = 'peek'; this.applySheet(); return; }
         this.show(tab);
-      } }, tab === 'settings' ? icon('gear') : t(('tab.' + tab) as StringKey));
-      if (tab === 'settings') { b.classList.add('tab-icon'); b.setAttribute('aria-label', t('tab.settings')); }
+      } }, ICON_TABS[tab] ? icon(ICON_TABS[tab] as string) : t(('tab.' + tab) as StringKey));
+      b.dataset.tab = tab;
+      if (ICON_TABS[tab]) { b.classList.add('tab-icon'); b.setAttribute('aria-label', t(('tab.' + tab) as StringKey)); }
       this.tabBar.append(b);
     }
     const scroll = this.body.scrollTop;
@@ -168,6 +186,7 @@ export class Panel {
       case 'layers': this.renderLayers(); break;
       case 'files': this.renderFiles(); break;
       case 'notes': this.renderNotes(); break;
+      case 'slices': this.renderSlices(); break;
       case 'diag': this.renderDiag(); break;
       case 'settings': this.renderSettings(); break;
     }
@@ -284,6 +303,18 @@ export class Panel {
     (this.el.parentElement ?? document.body).append(dialog);
   }
 
+  private privacyDialog(): void {
+    this.closeDialog();
+    const box = h('div', { class: 'dialog-box privacy', role: 'dialog', 'aria-modal': 'true' },
+      h('h2', { text: t('privacy.title') }),
+      ...t('privacy.text').split('\n').map((line) => h('p', { text: line })),
+      h('div', { class: 'row-actions' }, h('button', { class: 'btn primary', type: 'button', onclick: () => this.closeDialog() }, t('color.close'))));
+    const dialog = h('div', { class: 'dialog' }, box);
+    dialog.addEventListener('click', (e) => { if (e.target === dialog) this.closeDialog(); });
+    this.dialog = dialog;
+    (this.el.parentElement ?? document.body).append(dialog);
+  }
+
   private closeDialog(): void {
     this.dialog?.remove();
     this.dialog = null;
@@ -314,6 +345,36 @@ export class Panel {
     }
     this.body.append(h('div', { class: 'pad' },
       h('button', { class: 'btn', type: 'button', onclick: () => { store.clearRecents(); this.render(); } }, icon('trash'), t('files.clear'))));
+  }
+
+  // --- sections ----------------------------------------------------------
+  private renderSlices(): void {
+    const hasModel = (this.deps.viewer()?.files.length ?? 0) > 0;
+    const add = (kind: 'h' | 'v', label: string): HTMLElement => {
+      const b = h('button', { class: 'btn primary', type: 'button', onclick: () => this.deps.addSlice(kind) }, icon('plus'), label);
+      if (!hasModel) b.setAttribute('disabled', '');
+      return b;
+    };
+    this.body.append(
+      h('div', { class: 'row-actions compact' }, add('h', t('slice.h')), add('v', t('slice.v'))),
+      h('p', { class: 'muted pad small', text: hasModel ? t('slice.hint') : t('slice.needModel') }));
+    const slices = this.deps.slices();
+    if (slices.length === 0) {
+      this.body.append(h('p', { class: 'muted pad', text: t('slice.none') }));
+      return;
+    }
+    const active = this.deps.activeSlice();
+    for (let i = slices.length - 1; i >= 0; i--) {
+      const s = slices[i];
+      const on = s.id === active;
+      this.body.append(h('div', { class: 'recent slice-row' + (on ? ' on' : '') },
+        h('button', { class: 'recent-main', type: 'button', 'aria-label': t('slice.show'), 'aria-pressed': String(on), onclick: () => this.deps.toggleSlice(s.id) },
+          icon(on ? 'eye' : 'eyeOff'),
+          h('div', { class: 'layer-text' },
+            h('div', { class: 'layer-name', text: this.deps.sliceLabel(s) }),
+            h('div', { class: 'layer-meta', text: t('slice.thickness', { n: s.thickness }) }))),
+        h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('slice.delete'), onclick: () => this.deps.deleteSlice(s.id) }, icon('trash'))));
+    }
   }
 
   // --- notes -------------------------------------------------------------
@@ -445,6 +506,10 @@ export class Panel {
       toggle(t('set.grid'), s.grid, (v) => this.deps.updateSettings({ grid: v })),
       toggle(t('set.labels'), s.labels, (v) => this.deps.updateSettings({ labels: v })),
       toggle(t('set.keep'), s.keepCopies, (v) => this.deps.updateSettings({ keepCopies: v }), t('set.keepHint')),
+      toggle(t('set.tutorial'), s.tutorial, (v) => this.deps.updateSettings({ tutorial: v })),
+      h('div', { class: 'row-actions' },
+        h('button', { class: 'btn', type: 'button', onclick: () => this.deps.startTutorial() }, t('set.tutorialRun')),
+        h('button', { class: 'btn', type: 'button', onclick: () => this.privacyDialog() }, t('set.privacyOpen'))),
       h('p', { class: 'muted pad', text: t('set.privacy') }),
       h('p', { class: 'muted pad', text: t('set.version', { v: __APP_VERSION__ }) }),
     );

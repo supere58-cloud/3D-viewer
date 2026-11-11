@@ -22,7 +22,8 @@ const check = (ok, what) => { console.log((ok ? '  ok   ' : '  FAIL ') + what); 
 
 async function run(label, contextOptions, body) {
   console.log(label);
-  const context = await browser.newContext({ serviceWorkers: 'block', ...contextOptions });
+  const { keepTour: _k, ...browserOptions } = contextOptions;
+  const context = await browser.newContext({ serviceWorkers: 'block', ...browserOptions });
   const page = await context.newPage();
   const errors = [], foreign = [];
   page.on('console', (m) => { if ((m.type() === 'error' || m.type() === 'warning') && !/blocked by Playwright|example\.com/.test(m.text())) errors.push(m.text()); });
@@ -30,6 +31,11 @@ async function run(label, contextOptions, body) {
   page.on('request', (r) => { if (!r.url().startsWith(base) && !r.url().includes('example.com') && !r.url().startsWith('data:') && !r.url().startsWith('blob:')) foreign.push(r.url()); });
   await page.goto(base);
   await page.waitForSelector('.toolbar .tool');
+  // A fresh install offers the tutorial; most scenarios decline it.
+  if (!contextOptions.keepTour) {
+    await page.waitForSelector('.tour-skip');
+    await page.locator('.tour-skip').click();
+  }
   await body(page);
   check(errors.length === 0, `no console errors or warnings${errors.length ? ': ' + errors.join(' | ') : ''}`);
   check(foreign.length === 0, `no requests outside the app${foreign.length ? ': ' + foreign.join(', ') : ''}`);
@@ -248,6 +254,85 @@ await run('desktop, open a folder', { viewport: { width: 1100, height: 700 } }, 
   const csv = readFileSync(await download.path(), 'utf8');
   check(/^notes-\d{8}\.csv$/.test(download.suggestedFilename()) && csv.includes('1;') && csv.includes(';654321.13;7654321.50;-12.30;Слой 1;a.dxf;"проверка; ""кавычки"""'), 'notes export as a CSV table with coordinates');
   await page.screenshot({ path: path.join(outDir, 'desktop-folder.png') });
+});
+
+await run('phone, first run: tutorial', { ...devices['Pixel 7'], keepTour: true }, async (page) => {
+  await page.waitForSelector('.tour');
+  check(await page.locator('.tour h2').innerText() === 'Короткое обучение', 'the tutorial is offered on first run');
+  const seen = [];
+  for (let i = 0; i < 12; i++) {
+    await page.waitForFunction(() => !document.querySelector('.tour-next')?.hasAttribute('disabled'), null, { timeout: 30000 });
+    await page.waitForTimeout(450);
+    const title = await page.locator('.tour h2').innerText();
+    seen.push(title);
+    if (title === 'Координаты и измерения') {
+      check(await page.locator('.measure .m-grid').count() === 1, 'the measuring step shows a real measurement on the demo model');
+      await page.screenshot({ path: path.join(outDir, 'tour-measure.png') });
+    }
+    if (title === 'Разрезы') {
+      const st = await page.evaluate(() => ({ slice: !!window.__app.viewer.slice, bar: !document.querySelector('.slicebar').hidden }));
+      check(st.slice && st.bar, 'the sections step turns a section on');
+      await page.screenshot({ path: path.join(outDir, 'tour-slices.png') });
+    }
+    const last = (await page.locator('.tour-next').innerText()) === 'Готово';
+    await page.locator('.tour-next').tap();
+    if (last) break;
+  }
+  check(seen.length === 10, `the tutorial has ${seen.length} steps: ${seen.join(' / ')}`);
+  await page.waitForTimeout(300);
+  const after = await page.evaluate(() => ({ files: window.__app.viewer.files.length, slice: !!window.__app.viewer.slice, slices: window.__app.slices.length, tutorial: window.__app.settings.tutorial, recents: JSON.parse(localStorage.getItem('mv.recents') || '[]').length }));
+  check(after.files === 0 && !after.slice && after.slices === 0 && after.recents === 0, 'finishing closes the demo model and leaves nothing behind');
+  check(after.tutorial === false, 'the tutorial does not come back on the next start');
+  await page.reload();
+  await page.waitForSelector('.toolbar .tool');
+  await page.waitForTimeout(700);
+  check(await page.locator('.tour').count() === 0, 'no tutorial after a reload');
+  // It can be started again, and the privacy policy opens, from Settings.
+  await page.locator('.tab[data-tab="settings"]').tap();
+  await page.getByRole('button', { name: 'Политика конфиденциальности' }).tap();
+  check((await page.locator('.privacy').innerText()).includes('не собирает'), 'privacy policy opens from Settings');
+  await page.screenshot({ path: path.join(outDir, 'phone-privacy.png') });
+  await page.locator('.privacy .btn').tap();
+  await page.getByRole('button', { name: 'Пройти обучение' }).tap();
+  check(await page.locator('.tour').count() === 1, 'the tutorial can be started again from Settings');
+});
+
+await run('desktop, sections', { viewport: { width: 1100, height: 700 } }, async (page) => {
+  await openFiles(page, [sample]);
+  await page.locator('.tab[data-tab="slices"]').click();
+  // Horizontal section through the model centre.
+  await page.getByRole('button', { name: 'Горизонтальный' }).click();
+  await page.waitForTimeout(300);
+  const h = await page.evaluate(() => { const a = window.__app; const s = a.slices[0]; return { kind: s.kind, z: s.point[2], t: s.thickness, on: !!a.viewer.slice }; });
+  check(h.kind === 'h' && h.on && h.t > 0, `a horizontal section is added and shown (Z ${h.z.toFixed(1)}, ${h.t} m thick)`);
+  await page.screenshot({ path: path.join(outDir, 'desktop-slice-h.png') });
+  await page.getByRole('button', { name: 'Сдвинуть разрез вперёд' }).click();
+  const moved = await page.evaluate(() => window.__app.slices[0].point[2]);
+  check(Math.abs(moved - h.z - h.t) < 1e-6, 'the arrow pages the section by its thickness');
+  await page.getByRole('button', { name: 'Толще' }).click();
+  check(await page.evaluate(() => window.__app.slices[0].thickness) > h.t, 'the thickness can be changed');
+  // Taps only reach what the section shows.
+  const box = await page.locator('.stage').boundingBox();
+  const picks = await page.evaluate(([w, hh]) => {
+    const v = window.__app.viewer, s = window.__app.slices[0], out = [];
+    for (let i = 1; i < 8; i++) for (let j = 1; j < 8; j++) { const p = v.pick((w * i) / 8, (hh * j) / 8, false, false); if (p) out.push(Math.abs(p.point[2] - s.point[2]) <= s.thickness / 2 + 1e-3); }
+    return out;
+  }, [box.width, box.height]);
+  check(picks.length > 0 && picks.every(Boolean), `taps hit only geometry inside the section (${picks.length} hits checked)`);
+  // Vertical section along two picked points.
+  await page.getByRole('button', { name: 'Выключить разрез' }).click();
+  await page.evaluate(() => { const a = window.__app; a.onPick({ point: [654300, 7654300, 300], kind: 'vertex', layer: 'x', file: 'demo-mine.dxf' }); a.onPick({ point: [654500, 7654500, 250], kind: 'vertex', layer: 'x', file: 'demo-mine.dxf' }); });
+  await page.getByRole('button', { name: 'Вертикальный' }).click();
+  const v2 = await page.evaluate(() => { const s = window.__app.slices[1]; return { kind: s.kind, az: s.azimuth }; });
+  check(v2.kind === 'v' && Math.abs(v2.az - 45) < 1e-6, `a vertical section follows the two picked points (azimuth ${v2.az.toFixed(1)}°)`);
+  await page.getByRole('button', { name: 'Вид на разрез' }).click();
+  await page.waitForTimeout(700);
+  await page.screenshot({ path: path.join(outDir, 'desktop-slice-v.png') });
+  const face = await page.evaluate(() => { const s = window.__app.viewer.rig.state; return [s.heading, s.tilt]; });
+  check(Math.abs(face[1]) < 1e-6 && Math.abs(Math.abs(Math.sin(face[0] - (135 * Math.PI) / 180)) ) < 1e-6, 'the eye button turns the view square to the section');
+  await page.reload();
+  await page.waitForSelector('.toolbar .tool');
+  check(await page.evaluate(() => window.__app.slices.length === 2), 'sections are remembered');
 });
 
 await run('installed PWA, offline', { ...devices['Pixel 7'], serviceWorkers: 'allow' }, async (page) => {

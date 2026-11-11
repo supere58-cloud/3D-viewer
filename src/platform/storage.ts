@@ -5,6 +5,7 @@
 import type { LayerSettings } from '../viewer/viewer';
 import { STORE_DIR } from '../worker/protocol';
 import type { Note } from '../ui/notes';
+import type { Slice } from '../ui/slices';
 
 export interface Settings {
   lang: 'ru' | 'en';
@@ -12,6 +13,8 @@ export interface Settings {
   labels: boolean;
   ortho: boolean;
   keepCopies: boolean;
+  /** Offer the walkthrough when the app starts. */
+  tutorial: boolean;
 }
 
 export interface RecentFile {
@@ -24,7 +27,7 @@ export interface RecentFile {
 }
 
 const MAX_RECENTS = 12;
-const DEFAULTS: Settings = { lang: 'ru', grid: true, labels: true, ortho: false, keepCopies: true };
+const DEFAULTS: Settings = { lang: 'ru', grid: true, labels: true, ortho: false, keepCopies: true, tutorial: true };
 
 function read<T>(key: string, fallback: T): T {
   try {
@@ -71,6 +74,14 @@ export const store = {
   },
   saveLayerSettings(key: string, value: Record<string, LayerSettings>): void {
     write('mv.layers.' + key, value);
+  },
+
+  slices(): Slice[] {
+    const list = read<Slice[]>('mv.slices', []);
+    return Array.isArray(list) ? list : [];
+  },
+  saveSlices(slices: Slice[]): void {
+    write('mv.slices', slices);
   },
 
   notes(): Note[] {
