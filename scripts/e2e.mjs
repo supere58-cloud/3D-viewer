@@ -330,9 +330,36 @@ await run('desktop, sections', { viewport: { width: 1100, height: 700 } }, async
   await page.screenshot({ path: path.join(outDir, 'desktop-slice-v.png') });
   const face = await page.evaluate(() => { const s = window.__app.viewer.rig.state; return [s.heading, s.tilt]; });
   check(Math.abs(face[1]) < 1e-6 && Math.abs(Math.abs(Math.sin(face[0] - (135 * Math.PI) / 180)) ) < 1e-6, 'the eye button turns the view square to the section');
+  // Section tool "by line": tap an existing line, get a cut along it and a square-on view.
+  await page.getByRole('button', { name: 'Выключить разрез' }).click();
+  await page.evaluate(() => { window.__app.clearMeasure(); window.__app.viewer.fitAll(false); });
+  await page.waitForTimeout(300);
+  await page.getByRole('button', { name: /По линии/ }).click();
+  check(await page.locator('.slice-pick').count() === 1, 'the by-line tool asks for a line');
+  const spot = await page.evaluate(([w, hh]) => {
+    const v = window.__app.viewer; v.rig.update(performance.now());
+    for (let j = 6; j < 60; j++) for (let i = 6; i < 60; i++) {
+      const x = (w * i) / 64, y = (hh * j) / 64;
+      const p = v.pick(x, y, false);
+      if (p && p.segment && p.layer === 'Скважины') return { x, y, seg: p.segment };
+    }
+    return null;
+  }, [box.width, box.height]);
+  await page.mouse.click(box.x + spot.x, box.y + spot.y);
+  await page.waitForTimeout(700);
+  const byLine = await page.evaluate(() => { const a = window.__app, s = a.slices[a.slices.length - 1], st = a.viewer.rig.state; return { n: a.slices.length, kind: s.kind, az: s.azimuth, active: a.activeSlice === s.id, pick: a.slicePick, measured: !!a.pickA, heading: st.heading, tilt: st.tilt, half: s.halfLength }; });
+  const want = (((Math.atan2(spot.seg[1][0] - spot.seg[0][0], spot.seg[1][1] - spot.seg[0][1]) * 180) / Math.PI) % 180 + 180) % 180;
+  check(byLine.n === 3 && byLine.kind === 'v' && byLine.active && !byLine.pick && !byLine.measured && Math.abs(byLine.az - want) < 1e-6, `tapping a line cuts along it (azimuth ${byLine.az.toFixed(1)}°)`);
+  check(Math.abs(byLine.tilt) < 1e-6 && Math.abs(Math.cos(byLine.heading - (byLine.az * Math.PI) / 180)) < 1e-6, 'and the view turns perpendicular to the section');
+  await page.screenshot({ path: path.join(outDir, 'desktop-slice-line.png') });
+  await page.getByRole('button', { name: /По линии/ }).click();
+  await page.mouse.click(box.x + box.width - 200, box.y + 30);
+  await page.waitForTimeout(200);
+  check(await page.evaluate(() => window.__app.slicePick && window.__app.slices.length === 3), 'a tap that misses keeps the tool waiting for a line');
+  await page.getByRole('button', { name: 'Отмена' }).click();
   await page.reload();
   await page.waitForSelector('.toolbar .tool');
-  check(await page.evaluate(() => window.__app.slices.length === 2), 'sections are remembered');
+  check(await page.evaluate(() => window.__app.slices.length === 3), 'sections are remembered');
 });
 
 await run('installed PWA, offline', { ...devices['Pixel 7'], serviceWorkers: 'allow' }, async (page) => {

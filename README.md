@@ -59,7 +59,9 @@ purple layers stay visible as well as white, yellow and cyan ones.
   adds 3D distance, horizontal distance, ΔZ, azimuth (clockwise from north) and
   dip (negative = downwards). **Копировать** copies it all as text.
 - **Sections** (Разрезы tab): a section shows only a slab of the model so you
-  can look inside. **Горизонтальный** makes a level plan through the picked
+  can look inside. **По линии** is the quick way: tap a section line in the
+  model and the app cuts along it and turns the view square to the section,
+  framed on that line. **Горизонтальный** makes a level plan through the picked
   point (or the model centre). **Вертикальный** runs through the two points
   you tapped, for example two vertices of an existing line, or west–east when
   nothing is picked. While a section is on, a bar gives ◀ ▶ to page through

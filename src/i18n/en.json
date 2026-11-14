@@ -159,7 +159,7 @@
   "tab.slices": "Sections",
   "slice.h": "Horizontal",
   "slice.v": "Vertical",
-  "slice.hint": "A section shows only a slab of the model of the chosen thickness. A horizontal one passes through the picked point (or the model centre). Vertical: tap two points on the model, for example on an existing line, and the section runs through them; without points it runs west to east.",
+  "slice.hint": "A section shows only a slab of the model of the chosen thickness. By line: tap a section line on the model; the app cuts along it and turns the view square to the section. Horizontal passes through the picked point (or the model centre). Vertical runs through two marked points, or west to east without them.",
   "slice.none": "No sections yet",
   "slice.needModel": "Open a model first",
   "slice.name.h": "Plan Z {z}",
@@ -205,9 +205,12 @@
   "tour.layers.title": "Layers",
   "tour.layers.text": "Each layer has visibility, colour and opacity 100 / 50 / 20 %.\nLayers are grouped by file; tap a file name to fold its list. Settings are remembered.",
   "tour.slices.title": "Sections",
-  "tour.slices.text": "A section leaves only a slab of the model on screen so you can look inside.\nThe ◀ ▶ arrows page through sections step by step, − and + change the thickness, the eye turns the view to face the section.\nA vertical section can run through two points marked on an existing line.",
+  "tour.slices.text": "A section leaves only a slab of the model on screen so you can look inside.\nThe ◀ ▶ arrows page through sections step by step, − and + change the thickness, the eye turns the view to face the section.\nIn the Sections tab, By line cuts along the line you tap and shows the section square on.",
   "tour.files.title": "Recent files and diagnostics",
   "tour.files.text": "Opened files are kept in the Recent list and reopen without internet.\nThe “i” icon shows a file's diagnostics: what was read, what was skipped and why.",
   "tour.done.title": "All set",
-  "tour.done.text": "The demo model will now close.\nYou can run the tour again from Settings (the gear icon)."
+  "tour.done.text": "The demo model will now close.\nYou can run the tour again from Settings (the gear icon).",
+  "slice.byLine": "By line: tap a section line",
+  "slice.pickLine": "Tap the line to cut along",
+  "slice.notLine": "That is not a line. Tap a section line."
 }

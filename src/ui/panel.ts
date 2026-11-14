@@ -36,6 +36,8 @@ export interface PanelDeps {
   activeSlice(): string | null;
   sliceLabel(s: Slice): string;
   addSlice(kind: 'h' | 'v'): void;
+  /** Starts the "tap a line to cut along it" tool. */
+  pickSliceLine(): void;
   toggleSlice(id: string): void;
   deleteSlice(id: string): void;
   startTutorial(): void;
@@ -356,6 +358,11 @@ export class Panel {
       return b;
     };
     this.body.append(
+      h('div', { class: 'row-actions compact' }, (() => {
+        const b = h('button', { class: 'btn primary', type: 'button', onclick: () => this.deps.pickSliceLine() }, icon('slice'), t('slice.byLine'));
+        if (!hasModel) b.setAttribute('disabled', '');
+        return b;
+      })()),
       h('div', { class: 'row-actions compact' }, add('h', t('slice.h')), add('v', t('slice.v'))),
       h('p', { class: 'muted pad small', text: hasModel ? t('slice.hint') : t('slice.needModel') }));
     const slices = this.deps.slices();

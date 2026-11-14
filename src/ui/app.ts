@@ -55,6 +55,8 @@ export class App {
   private tour: Tour | null = null;
   private demoFile: ViewFile | null = null;
   private tourSlice: string | null = null;
+  /** True while waiting for the user to tap a line to cut along. */
+  private slicePick = false;
   private pumping: Promise<void> | null = null;
 
   constructor(root: HTMLElement) {
@@ -120,6 +122,7 @@ export class App {
       activeSlice: () => this.activeSlice,
       sliceLabel: (s) => this.sliceLabel(s),
       addSlice: (kind) => this.addSlice(kind),
+      pickSliceLine: () => this.setSlicePick(true),
       toggleSlice: (id) => this.setActiveSlice(this.activeSlice === id ? null : id),
       deleteSlice: (id) => this.deleteSlice(id),
       startTutorial: () => this.startTutorial(),
@@ -259,6 +262,7 @@ export class App {
   private handleBack(): boolean {
     if (!this.busy.hidden) { this.cancelLoading(); return true; }
     if (this.tour?.active) { this.tour.stop(false); return true; }
+    if (this.slicePick) { this.setSlicePick(false); return true; }
     return this.panel.back();
   }
 
@@ -279,6 +283,7 @@ export class App {
   // --- measurement -------------------------------------------------------
   private onPick(r: PickResult | null): void {
     if (!this.viewer || this.viewer.files.length === 0) return;
+    if (this.slicePick) { this.sliceFromLine(r); return; }
     this.noHit = r === null;
     if (r) {
       if (this.pickA && !this.pickB) this.pickB = r;
@@ -391,6 +396,34 @@ export class App {
     return slice.id;
   }
 
+  /** Section tool "by line": the next tap on a line cuts along it. */
+  private setSlicePick(on: boolean): void {
+    if (on && (this.viewer?.files.length ?? 0) === 0) { this.toast(t('slice.needModel')); return; }
+    this.slicePick = on;
+    if (on) this.panel.peek();
+    this.renderSliceBar();
+  }
+
+  /** Makes a vertical section along the tapped line and turns the view square to it. */
+  private sliceFromLine(r: PickResult | null): void {
+    const v = this.viewer;
+    const seg = r?.segment;
+    const az = seg ? azimuthBetween(seg[0], seg[1]) : null;
+    if (!v || !seg || az === null) { this.toast(t('slice.notLine')); return; }
+    const [a, b] = seg;
+    const slice: Slice = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      kind: 'v', azimuth: az,
+      point: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2],
+      thickness: nearestThickness(v.rig.sceneRadius * 0.04),
+      halfLength: Math.hypot(b[0] - a[0], b[1] - a[1]) / 2,
+    };
+    this.slices.push(slice);
+    this.slicePick = false;
+    this.setActiveSlice(slice.id);
+    this.faceSlice();
+  }
+
   private setActiveSlice(id: string | null): void {
     this.activeSlice = id;
     this.applySlice();
@@ -419,15 +452,26 @@ export class App {
     // Look square at the section, from whichever side is nearer to the current view.
     const a = ((s.azimuth + 90) * Math.PI) / 180;
     const diff = Math.abs((((v.rig.state.heading - a) % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI) - Math.PI);
-    v.lookFrom(diff < Math.PI / 2 ? a : a + Math.PI, 0);
+    const heading = diff < Math.PI / 2 ? a : a + Math.PI;
+    const zr = v.zRangeTrue();
+    if (s.halfLength && zr) {
+      // Made from a line: frame that line over the full height of the model.
+      v.lookAtRegion(heading, 0, [s.point[0], s.point[1], (zr[0] + zr[1]) / 2], Math.hypot(s.halfLength, (zr[1] - zr[0]) / 2));
+    } else v.lookFrom(heading, 0);
   }
 
   private renderSliceBar(): void {
     const bar = this.sliceBar;
     const s = this.currentSlice();
     clear(bar);
-    bar.hidden = !s;
-    this.viewport.style.setProperty('--slicebar', s ? '104px' : '0px');
+    bar.hidden = !s && !this.slicePick;
+    this.viewport.style.setProperty('--slicebar', this.slicePick ? '64px' : s ? '104px' : '0px');
+    if (this.slicePick) {
+      bar.append(h('div', { class: 'slice-pick' },
+        h('b', { text: t('slice.pickLine') }),
+        h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('busy.cancel'), onclick: () => this.setSlicePick(false) }, icon('close'))));
+      return;
+    }
     if (!s) return;
     const btn = (name: string, label: string, fn: () => void): HTMLElement =>
       h('button', { class: 'icon-btn', type: 'button', title: label, 'aria-label': label, onclick: fn }, icon(name));

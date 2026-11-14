@@ -54,6 +54,8 @@ export interface PickResult {
   kind: PickKind;
   layer: string;
   file: string;
+  /** When a line was hit: both ends of the tapped segment, true coordinates. */
+  segment?: [Vec3, Vec3];
 }
 
 /** A slice: only geometry within thickness/2 of the plane through `point` is shown. */
@@ -450,6 +452,28 @@ export class Viewer {
     }
     this.rig.animateTo(to);
     this.requestRender();
+  }
+
+  /**
+   * Looks from a given direction at a region: `center` in true coordinates,
+   * framed so a sphere of `radius` fits. Used to face a section.
+   */
+  lookAtRegion(heading: number, tilt: number, center: Vec3, radius: number): void {
+    const so = this.sceneOrigin;
+    if (!so) return;
+    this.rig.animateTo({
+      heading, tilt,
+      target: new Vector3(center[0] - so[0], center[1] - so[1], center[2] - so[2]),
+      distance: this.rig.fitDistance(Math.max(0.5, radius)),
+    });
+    this.requestRender();
+  }
+
+  /** True-coordinate Z range of the loaded models. */
+  zRangeTrue(): [number, number] | null {
+    const b = this.bounds(), so = this.sceneOrigin;
+    if (!b || !so) return null;
+    return [b.min.z + so[2], b.max.z + so[2]];
   }
 
   /** Turns the view by a step around the current pivot, snapping to whole steps. */
@@ -867,6 +891,10 @@ export class Viewer {
             point: [file.origin[0] + hit.x, file.origin[1] + hit.y, file.origin[2] + hit.z],
             kind: hit.vertex ? 'vertex' : kind, layer: layer.name, file: file.name,
           };
+          if (hit.seg) {
+            const o = file.origin, g = hit.seg;
+            best.segment = [[o[0] + g[0], o[1] + g[1], o[2] + g[2]], [o[0] + g[3], o[1] + g[4], o[2] + g[5]]];
+          }
         };
         if (layer.lines) {
           const pos = (layer.lines.geometry.getAttribute('position') as BufferAttribute).array as Float32Array;

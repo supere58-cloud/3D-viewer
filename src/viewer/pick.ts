@@ -14,6 +14,8 @@ export interface ScreenHit {
   x: number; y: number; z: number;
   /** True when the hit is exactly a stored vertex. */
   vertex: boolean;
+  /** For a line hit: both ends of the segment, local coordinates (ax, ay, az, bx, by, bz). */
+  seg?: [number, number, number, number, number, number];
 }
 
 const EPS_W = 1e-6;
@@ -97,6 +99,7 @@ export function pickSegments(
   }
   return {
     px, vertex,
+    seg: [pos[i], pos[i + 1], pos[i + 2], pos[i + 3], pos[i + 4], pos[i + 5]],
     x: pos[i] + (pos[i + 3] - pos[i]) * t,
     y: pos[i + 1] + (pos[i + 4] - pos[i + 1]) * t,
     z: pos[i + 2] + (pos[i + 5] - pos[i + 2]) * t,
