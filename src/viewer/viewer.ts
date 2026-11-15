@@ -492,6 +492,8 @@ export class Viewer {
       const tex = new Texture(source as unknown as HTMLCanvasElement);
       tex.flipY = false;
       tex.colorSpace = SRGBColorSpace;
+      // Sheets are mostly seen at a slant; without this they blur into a pale smear.
+      tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
       tex.needsUpdate = true;
       // Once the pixels are on the graphics card the decoded copy is not needed.
       tex.onUpdate = () => closeSource(source);
