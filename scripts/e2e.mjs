@@ -239,12 +239,12 @@ await run('desktop, open a folder', { viewport: { width: 1100, height: 700 } }, 
   check(await page.getByRole('button', { name: 'Папка' }).count() === 1, 'folder button is offered');
   // The fixtures folder holds supported models, one binary DXF and unrelated files.
   await page.setInputFiles('input[webkitdirectory]', path.join(root, 'tests', 'fixtures'));
-  await page.waitForFunction(() => window.__app.viewer.files.length >= 10 && document.querySelector('.busy').hidden, null, { timeout: 60000 });
+  await page.waitForFunction(() => window.__app.viewer.files.length >= 11 && document.querySelector('.busy').hidden, null, { timeout: 60000 });
   const n = await page.evaluate(() => window.__app.viewer.files.length);
-  check(n === 10, `every loadable file in the folder is opened (${n}), the unreadable one is reported and skipped`);
+  check(n === 11, `every loadable file in the folder is opened (${n}), the unreadable one is reported and skipped`);
   const rows = await page.locator('.layer').count();
   const heads = await page.locator('.file-head').count();
-  check(heads === 10 && rows < 12, `with many files open their layer lists start folded (${heads} files, ${rows} layer rows shown)`);
+  check(heads === 11 && rows < 12, `with many files open their layer lists start folded (${heads} files, ${rows} layer rows shown)`);
   await page.locator('.file-head .file-name').last().click();
   check(await page.locator('.layer').count() > rows, 'tapping a file name unfolds its layers');
   // Notes table export.
@@ -360,6 +360,44 @@ await run('desktop, sections', { viewport: { width: 1100, height: 700 } }, async
   await page.reload();
   await page.waitForSelector('.toolbar .tool');
   check(await page.evaluate(() => window.__app.slices.length === 3), 'sections are remembered');
+});
+
+await run('desktop, section pictures', { viewport: { width: 1100, height: 700 } }, async (page) => {
+  await page.setInputFiles('input[type=file]:not([webkitdirectory])', [sample, fx('section.png'), fx('section.grf')]);
+  await page.waitForFunction(() => { const v = window.__app.viewer; return v.files.length === 2 && document.querySelector('.busy').hidden && [...v.images.values()].every((i) => i.state === 'ready'); }, null, { timeout: 60000 });
+  await page.waitForTimeout(600);
+  const img = await page.evaluate(() => { const f = window.__app.viewer.files.find((x) => x.diagnostics.format === 'image'); return { name: f.name, box: f.diagnostics.bbox, map: !!f.layers[0].mesh.material.map }; });
+  check(img.name === 'section.png' && img.map && img.box.min[0] === 654200 && img.box.max[0] === 654584 && img.box.min[2] === 66 && img.box.max[2] === 450 && img.box.min[1] === 7654400 && img.box.max[1] === 7654400,
+    `a picture with a .grf stands in the model where the .grf says (${JSON.stringify(img.box)})`);
+  await page.evaluate(() => { const v = window.__app.viewer; v.lookFrom(0.5, 0.25); });
+  await page.waitForTimeout(700);
+  await page.screenshot({ path: path.join(outDir, 'desktop-section-image.png') });
+  // A tap on the picture gives real coordinates on its plane.
+  const hit = await page.evaluate(() => {
+    const v = window.__app.viewer; v.rig.update(performance.now());
+    for (const l of v.files[0].layers) { l.visible = false; v.applyLayer(l); }
+    for (let j = 10; j < 54; j++) for (let i = 10; i < 54; i++) { const p = v.pick((v.rig.width * i) / 64, (v.rig.height * j) / 64, false, false); if (p && p.file === 'section.png') return p.point; }
+    return null;
+  });
+  check(hit && Math.abs(hit[1] - 7654400) < 0.01 && hit[0] > 654200 && hit[0] < 654584 && hit[2] > 66 && hit[2] < 450, `tapping the picture reads coordinates on its plane (${hit?.map((n) => n.toFixed(1))})`);
+  // The section tool pointed at a picture cuts along it and faces it.
+  const picked = await page.evaluate(() => { const v = window.__app.viewer; for (let j = 10; j < 54; j++) for (let i = 10; i < 54; i++) { const x = (v.rig.width * i) / 64, y = (v.rig.height * j) / 64; const p = v.pick(x, y, false, false); if (p && p.file === 'section.png') return { x, y }; } return null; });
+  await page.locator('.tab[data-tab="slices"]').click();
+  await page.getByRole('button', { name: /По линии/ }).click();
+  const sb = await page.locator('.stage').boundingBox();
+  await page.mouse.click(sb.x + picked.x, sb.y + picked.y);
+  await page.waitForTimeout(800);
+  const faced = await page.evaluate(() => { const a = window.__app, s = a.slices[a.slices.length - 1], st = a.viewer.rig.state; for (const l of a.viewer.files[0].layers) { l.visible = true; a.viewer.applyLayer(l); } return { az: s.azimuth, y: s.point[1], tilt: st.tilt, sin: Math.abs(Math.sin(st.heading)) }; });
+  check(Math.abs(faced.az - 90) < 1e-6 && Math.abs(faced.y - 7654400) < 1e-6 && Math.abs(faced.tilt) < 1e-6 && faced.sin < 1e-6, 'pointing the section tool at a picture cuts along it and faces it square on');
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: path.join(outDir, 'desktop-section-faced.png') });
+  // Hidden pictures give their memory back.
+  const freed = await page.evaluate(() => { const v = window.__app.viewer; const f = v.files[1]; f.layers[0].visible = false; v.applyLayer(f.layers[0]); return f.layers[0].mesh.material.map === null; });
+  check(freed, 'hiding a picture frees its texture');
+  // A picture without a .grf, and a TIFF, are refused with a clear message.
+  await page.setInputFiles('input[type=file]:not([webkitdirectory])', [fx('section.png')]);
+  await page.waitForSelector('.toast.error');
+  check((await page.locator('.toast.error').last().innerText()).includes('.grf'), 'a picture without a .grf is skipped with an explanation');
 });
 
 await run('installed PWA, offline', { ...devices['Pixel 7'], serviceWorkers: 'allow' }, async (page) => {

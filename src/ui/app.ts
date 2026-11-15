@@ -3,7 +3,7 @@ import { LoadError, type LoadErrorCode, type Vec3 } from '../core/types';
 import { formatFromName } from '../core/load';
 import { getLang, hasKey, setLang, t, type StringKey } from '../i18n';
 import { loadModel, type LoadHandle, type LoadSource } from '../platform/loader';
-import { initNative, isNative, pickNativeFolder, platform, releaseNative, type IncomingFile } from '../platform/native';
+import { initNative, isNative, pickNativeFolder, platform, readNativeBlob, releaseNative, type IncomingFile } from '../platform/native';
 import { fileKey, privateStorageAvailable, store, storeName, storedExists, type RecentFile, type Settings } from '../platform/storage';
 import { Viewer, type LayerSettings, type PickResult, type ViewFile, type ViewLayer } from '../viewer/viewer';
 import { clear, copyText, fmt, h, icon } from './dom';
@@ -14,9 +14,14 @@ import { Panel } from './panel';
 import { azimuthBetween, changeThickness, moveSlice, nearestThickness, slicePlane, type Slice } from './slices';
 import { Tour, type TourStep } from './tutorial';
 import { demoDxf } from '../core/demo';
+import { imageCorners, imageSize, isImageName, pairKey, parseGrf } from '../core/formats/grf';
 
 type QueueItem = LoadSource & { nativePath?: string; /** The built-in tutorial model: not kept, not listed in Recent. */ demo?: boolean };
 const DEMO_KEY = 'demo|0';
+/** A picture with its georeference; both are loaded lazily (from a File, or a native path). */
+interface ImageItem { name: string; size: number; image: () => Promise<Blob>; grf: () => Promise<Blob>; nativePaths: string[] }
+/** Pictures shown at once when a batch is opened; the rest start hidden to spare memory. */
+const MAX_VISIBLE_IMAGES = 8;
 
 export class App {
   private settings: Settings = store.loadSettings();
@@ -157,6 +162,7 @@ export class App {
           this.banner.textContent = lost ? t('err.contextLost') : '';
         },
       });
+      this.viewer.onImageError = (name) => this.toast(t('err.withFile', { name, msg: t('img.tooBig') }), 'error');
     } catch {
       this.viewer = null;
       clear(this.viewport);
@@ -605,13 +611,84 @@ export class App {
   }
 
   private saveSession(): void {
-    store.saveSession([...this.keys.values()].filter((k) => k !== DEMO_KEY));
+    // Pictures are not kept in private storage, so they cannot be part of "open last set".
+    store.saveSession([...this.keys].filter(([f, k]) => k !== DEMO_KEY && f.diagnostics.format !== 'image').map(([, k]) => k));
   }
 
   // --- opening files -----------------------------------------------------
   openFiles(files: File[]): void {
     if (files.length === 0) return;
-    this.enqueue(files.map((f) => ({ kind: 'file' as const, name: f.name, size: f.size, file: f })));
+    const rest = this.takeImages(files.map((f) => ({ name: f.name, size: f.size, blob: () => Promise.resolve(f as Blob), ref: f, path: null })));
+    this.enqueue(rest.map((f) => ({ kind: 'file' as const, name: f.name, size: f.size, file: f })));
+  }
+
+  /**
+   * Picks out georeferenced pictures (a .jpg / .png with a Micromine .grf of
+   * the same name) from a batch, queues them, and returns the other files.
+   */
+  private takeImages<T>(list: { name: string; size: number; blob: () => Promise<Blob>; ref: T; path: string | null }[]): T[] {
+    const grfs = new Map<string, (typeof list)[number]>();
+    for (const f of list) if (/\.grf$/i.test(f.name)) grfs.set(pairKey(f.name), f);
+    const rest: T[] = [];
+    const items: ImageItem[] = [];
+    let unplaced = 0, tiff = 0;
+    const leftover: string[] = [];
+    for (const f of list) {
+      if (/\.grf$/i.test(f.name)) continue;
+      if (/\.tiff?$/i.test(f.name)) { tiff++; if (f.path) leftover.push(f.path); continue; }
+      if (!isImageName(f.name)) {
+        // Sidecar files of other programs travel with the pictures; they are not models.
+        if (/\.(jgw|pgw|tfw|tab|wld)$/i.test(f.name)) { if (f.path) leftover.push(f.path); continue; }
+        rest.push(f.ref);
+        continue;
+      }
+      const g = grfs.get(pairKey(f.name));
+      if (!g) { unplaced++; if (f.path) leftover.push(f.path); continue; }
+      items.push({ name: f.name, size: f.size, image: f.blob, grf: g.blob, nativePaths: [f.path, g.path].filter((p): p is string => !!p) });
+    }
+    const used = new Set(items.flatMap((i) => i.nativePaths));
+    for (const g of grfs.values()) if (g.path && !used.has(g.path)) leftover.push(g.path);
+    if (leftover.length) void releaseNative(leftover);
+    if (unplaced > 0) this.toast(t('img.noGrf', { n: unplaced }), 'error');
+    if (tiff > 0) this.toast(t('img.tiff', { n: tiff }), 'error');
+    if (items.length > 0) void this.loadImages(items);
+    return rest;
+  }
+
+  private async loadImages(items: ImageItem[]): Promise<void> {
+    const viewer = this.viewer;
+    if (!viewer) return;
+    // Models of the same batch are queued right after this call: let that happen, then wait for them,
+    // so the pictures are listed after the models they belong to.
+    await Promise.resolve();
+    while (this.pumping) await this.pumping;
+    let shown = viewer.files.filter((f) => f.diagnostics.format === 'image' && f.layers[0]?.visible).length;
+    let ok = 0, hidden = 0;
+    for (const item of items) {
+      try {
+        const geo = parseGrf(await (await item.grf()).text());
+        const blob = await item.image();
+        const size = imageSize(new Uint8Array(await blob.slice(0, 1 << 20).arrayBuffer()));
+        if (!geo || !size) throw new Error('bad georeference or picture');
+        const key = fileKey(item.name, item.size);
+        for (const [file, k] of [...this.keys]) if (k === key) this.closeFile(file, false);
+        const visible = shown < MAX_VISIBLE_IMAGES;
+        const file = viewer.addImage('f' + this.nextId++, item.name, t('img.layer'), imageCorners(geo, size.width, size.height), blob, size.width, size.height, store.layerSettings(key), visible);
+        if (file.layers[0].visible) shown++; else hidden++;
+        this.keys.set(file, key);
+        ok++;
+      } catch {
+        this.toast(t('err.withFile', { name: item.name, msg: t('img.bad') }), 'error');
+      } finally {
+        if (item.nativePaths.length) void releaseNative(item.nativePaths);
+      }
+    }
+    if (ok > 0) {
+      this.toast(hidden > 0 ? t('img.loadedHidden', { n: ok, m: hidden }) : t('img.loaded', { n: ok }));
+      viewer.fitAll();
+    }
+    this.syncEmpty();
+    this.panel.render();
   }
 
   /** Opens every supported file of a folder, including sub-folders. */
@@ -630,7 +707,8 @@ export class App {
 
   private openFolderFiles(all: File[]): void {
     if (all.length === 0) return;
-    const files = all.filter((f) => formatFromName(f.name) !== null).sort((a, b) => a.name.localeCompare(b.name));
+    const usable = (f: File): boolean => formatFromName(f.name) !== null || isImageName(f.name) || /\.grf$/i.test(f.name);
+    const files = all.filter(usable).sort((a, b) => a.name.localeCompare(b.name));
     if (files.length === 0) { this.toast(t('err.folderEmpty'), 'error'); return; }
     this.toast(t('info.folder', { n: files.length, m: all.length - files.length }));
     this.openFiles(files);
@@ -638,7 +716,8 @@ export class App {
 
   private openNative(files: IncomingFile[], failed: number): void {
     if (failed > 0) this.toast(t('err.intake', { n: failed }), 'error');
-    this.enqueue(files.map((f) => ({ kind: 'native' as const, name: f.name, size: f.size, path: f.path, nativePath: f.path })));
+    const rest = this.takeImages(files.map((f) => ({ name: f.name, size: f.size, blob: () => readNativeBlob(f.path), ref: f, path: f.path })));
+    this.enqueue(rest.map((f) => ({ kind: 'native' as const, name: f.name, size: f.size, path: f.path, nativePath: f.path })));
   }
 
   private async openRecent(r: RecentFile): Promise<void> {

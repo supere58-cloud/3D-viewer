@@ -28,7 +28,7 @@ export interface LayerDef {
   hidden: boolean;
 }
 
-export type FileFormat = 'dxf' | 'glb' | 'obj' | 'stl';
+export type FileFormat = 'dxf' | 'glb' | 'obj' | 'stl' | 'image';
 
 export type WarningCode =
   | 'truncated'

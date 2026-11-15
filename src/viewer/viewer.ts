@@ -8,8 +8,8 @@
  */
 import {
   AmbientLight, BufferAttribute, BufferGeometry, Color, DirectionalLight, DoubleSide, Group, LineBasicMaterial,
-  LineSegments, Matrix4, Mesh, MeshLambertMaterial, Plane, Points, PointsMaterial, Raycaster, Scene, Vector2, Vector3,
-  WebGLRenderer, type Intersection,
+  LineSegments, Matrix4, Mesh, MeshBasicMaterial, MeshLambertMaterial, Plane, Points, PointsMaterial, Raycaster, Scene, Vector2, Vector3,
+  SRGBColorSpace, Texture, WebGLRenderer, type Intersection,
 } from 'three';
 import { MeshBVH, acceleratedRaycast, type SerializedBVH } from 'three-mesh-bvh';
 import type { Diagnostics, ParsedLabels, ParsedLayer, ParsedModel, Vec3 } from '../core/types';
@@ -27,7 +27,7 @@ export interface ViewLayer {
   customColor: number | null;
   opacity: Opacity;
   visible: boolean;
-  mesh: Mesh<BufferGeometry, MeshLambertMaterial> | null;
+  mesh: Mesh<BufferGeometry, MeshLambertMaterial | MeshBasicMaterial> | null;
   lines: LineSegments<BufferGeometry, LineBasicMaterial> | null;
   points: Points<BufferGeometry, PointsMaterial> | null;
   hasVertexColors: boolean;
@@ -93,6 +93,36 @@ const SRGB_TO_LINEAR = (() => {
   return t;
 })();
 
+type ImageSource = ImageBitmap | HTMLCanvasElement;
+
+function closeSource(source: ImageSource): void {
+  if ('close' in source) source.close();
+}
+
+/** Decodes a picture straight to the wanted size; falls back to <img> + canvas on older browsers. */
+async function decodeImage(blob: Blob, width: number, height: number): Promise<ImageSource> {
+  try {
+    return await createImageBitmap(blob, { resizeWidth: width, resizeHeight: height, resizeQuality: 'medium' });
+  } catch {
+    const url = URL.createObjectURL(blob);
+    try {
+      const el = new Image();
+      el.decoding = 'async';
+      el.src = url;
+      await el.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('2d canvas unavailable');
+      ctx.drawImage(el, 0, 0, width, height);
+      return canvas;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+}
+
 function cssColor(c: number): string {
   return '#' + c.toString(16).padStart(6, '0');
 }
@@ -125,6 +155,10 @@ export class Viewer {
   private markerA: Vec3 | null = null;
   private markerB: Vec3 | null = null;
   private pins: { p: Vec3; label: string }[] = [];
+  /** Georeferenced pictures: the texture exists only while the picture is shown. */
+  private images = new Map<ViewLayer, { blob: Blob; width: number; height: number; corners: [Vec3, Vec3, Vec3, Vec3]; state: 'idle' | 'loading' | 'ready' | 'failed'; token: number }>();
+  /** Called when a picture cannot be decoded (too large for the device, damaged). */
+  onImageError: (name: string) => void = () => {};
   private slice: SlicePlane | null = null;
   /** The two faces of the active slice, in scene coordinates; shared by every model material. */
   private clipPlanes = [new Plane(), new Plane()];
@@ -207,6 +241,10 @@ export class Viewer {
     this.canvas.addEventListener('webglcontextrestored', () => {
       this.contextLost = false;
       this.events.onContextLost(false);
+      // Picture textures do not keep their pixels in memory: decode the shown ones again.
+      for (const [layer, img] of this.images) {
+        if (img.state === 'ready') { img.state = 'idle'; this.syncImage(layer); }
+      }
       this.requestRender();
     });
 
@@ -364,7 +402,110 @@ export class Viewer {
       mat.depthWrite = !transparent;
       obj.renderOrder = transparent ? 1 : 0;
     }
+    if (this.images.has(layer)) this.syncImage(layer);
     this.requestRender();
+  }
+
+  // --- georeferenced pictures --------------------------------------------
+  /**
+   * Adds a picture standing in 3D (a section drawing, a plan) as a file with
+   * one layer. corners: top-left, top-right, bottom-right, bottom-left in true
+   * coordinates. The picture is decoded only while it is visible and at a
+   * reduced size, so a folder of large scans does not exhaust memory.
+   */
+  addImage(id: string, name: string, layerName: string, corners: [Vec3, Vec3, Vec3, Vec3], blob: Blob, width: number, height: number, saved: Record<string, LayerSettings> | null, visible: boolean): ViewFile {
+    const first = this.files.length === 0;
+    const origin: Vec3 = [Math.round(corners[0][0]), Math.round(corners[0][1]), Math.round(corners[0][2])];
+    if (!this.sceneOrigin) this.sceneOrigin = [...origin];
+    const so = this.sceneOrigin;
+    this.updateClipPlanes();
+    const group = new Group();
+    group.position.set(origin[0] - so[0], origin[1] - so[1], origin[2] - so[2]);
+    group.updateMatrixWorld(true);
+    const pos = new Float32Array(12);
+    const min: Vec3 = [Infinity, Infinity, Infinity], max: Vec3 = [-Infinity, -Infinity, -Infinity];
+    corners.forEach((c, i) => {
+      for (let k = 0; k < 3; k++) {
+        pos[i * 3 + k] = c[k] - origin[k];
+        min[k] = Math.min(min[k], c[k]); max[k] = Math.max(max[k], c[k]);
+      }
+    });
+    const geo = new BufferGeometry();
+    geo.setAttribute('position', new BufferAttribute(pos, 3));
+    // Row 0 of the picture is its top edge.
+    geo.setAttribute('uv', new BufferAttribute(new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]), 2));
+    geo.setIndex([0, 3, 2, 0, 2, 1]);
+    geo.computeBoundingSphere();
+    geo.computeBoundingBox();
+    const mesh = new Mesh(geo, new MeshBasicMaterial({ side: DoubleSide, color: 0xffffff }));
+    group.add(mesh);
+    const s = saved?.[layerName] ?? null;
+    const layer: ViewLayer = {
+      name: layerName, baseColor: 0xffffff, customColor: null, opacity: s?.o ?? 1, visible: s ? s.v : visible,
+      mesh, lines: null, points: null, hasVertexColors: false, counts: { tri: 0, seg: 0, pt: 0, txt: 0 }, css: '#ffffff',
+    };
+    this.images.set(layer, { blob, width, height, corners, state: 'idle', token: 0 });
+    this.scene.add(group);
+    const file: ViewFile = {
+      id, name, origin, focus: { min, max }, group, layers: [layer],
+      labels: { pos: new Float32Array(0), height: new Float32Array(0), layer: new Uint32Array(0), text: [] },
+      diagnostics: {
+        format: 'image', bytes: blob.size, parseMs: 0, encoding: '-', codepage: null, version: null,
+        entities: { [`${width} × ${height} px`]: 1 }, skipped: {}, malformedLines: 0,
+        triangles: 0, segments: 0, points: 0, texts: 0, blocks: 0, layers: 1, warnings: [], bbox: { min: [...min], max: [...max] },
+      },
+      visible: true,
+    };
+    this.files.push(file);
+    this.applyLayer(layer);
+    this.updateSceneBounds();
+    if (first) {
+      this.rig.state.heading = (30 * Math.PI) / 180;
+      this.rig.state.tilt = (35 * Math.PI) / 180;
+      this.fitAll(false);
+    }
+    this.requestRender();
+    return file;
+  }
+
+  /** Decodes the picture when its layer is shown and frees it when hidden. */
+  private syncImage(layer: ViewLayer): void {
+    const img = this.images.get(layer);
+    const mesh = layer.mesh;
+    if (!img || !mesh) return;
+    const mat = mesh.material as MeshBasicMaterial;
+    if (!layer.visible) {
+      img.token++;
+      if (mat.map) { mat.map.dispose(); mat.map = null; mat.needsUpdate = true; }
+      if (img.state !== 'failed') img.state = 'idle';
+      return;
+    }
+    if (img.state !== 'idle') return;
+    img.state = 'loading';
+    const token = ++img.token;
+    // Phones get a smaller texture: 2048 px is about 16 MB of graphics memory per picture.
+    const limit = Math.min(this.renderer.capabilities.maxTextureSize, window.matchMedia('(pointer: coarse)').matches ? 2048 : 4096);
+    const scale = Math.min(1, limit / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * scale)), h = Math.max(1, Math.round(img.height * scale));
+    decodeImage(img.blob, w, h).then((source) => {
+      if (token !== img.token) { closeSource(source); return; }
+      const tex = new Texture(source as unknown as HTMLCanvasElement);
+      tex.flipY = false;
+      tex.colorSpace = SRGBColorSpace;
+      tex.needsUpdate = true;
+      // Once the pixels are on the graphics card the decoded copy is not needed.
+      tex.onUpdate = () => closeSource(source);
+      mat.map = tex;
+      mat.needsUpdate = true;
+      img.state = 'ready';
+      this.requestRender();
+    }).catch(() => {
+      if (token !== img.token) return;
+      img.state = 'failed';
+      mat.color.setHex(0x8a9099);
+      this.onImageError(layer.name);
+      this.requestRender();
+    });
   }
 
   setFileVisible(file: ViewFile, visible: boolean): void {
@@ -379,10 +520,13 @@ export class Viewer {
     this.files.splice(i, 1);
     this.scene.remove(file.group);
     for (const l of file.layers) {
+      const img = this.images.get(l);
+      if (img) { img.token++; this.images.delete(l); }
       for (const obj of [l.mesh, l.lines, l.points]) {
         if (!obj) continue;
         obj.geometry.boundsTree = undefined;
         obj.geometry.dispose();
+        (obj.material as MeshBasicMaterial).map?.dispose();
         obj.material.dispose();
       }
     }
@@ -850,9 +994,12 @@ export class Viewer {
       const o = owner.get(surface.object as Mesh)!;
       bestDepth = depthOf(surface.point);
       best = { point: [surface.point.x + so[0], surface.point.y + so[1], surface.point.z + so[2]], kind: 'surface', layer: o.layer.name, file: o.file.name };
+      // A section picture: its top edge is the section line, so the section tool can cut along it.
+      const picture = this.images.get(o.layer);
+      if (picture) best.segment = [picture.corners[0], picture.corners[1]];
       // Snap to the nearest corner of the hit triangle if it is close on screen.
       const fi = surface.faceIndex;
-      if (fi !== undefined && fi !== null) {
+      if (fi !== undefined && fi !== null && !o.layer.mesh!.geometry.index) {
         const pos = (o.layer.mesh!.geometry.getAttribute('position') as BufferAttribute).array as Float32Array;
         const m = this.mvp.multiplyMatrices(this.viewProj, o.file.group.matrixWorld).elements;
         const p = { x: 0, y: 0, w: 0 };

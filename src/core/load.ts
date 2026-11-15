@@ -89,6 +89,8 @@ export class ModelLoader {
       case 'obj': this.obj = new ObjParser(this.builder, layer); return first;
       case 'stl': this.stl = new StlParser(this.builder, layer, this.totalBytes); return first;
       case 'glb': return first;
+      // Pictures are placed by the viewer from their georeference, not parsed here.
+      case 'image': throw new LoadError('unsupportedFormat', this.name);
     }
   }
 

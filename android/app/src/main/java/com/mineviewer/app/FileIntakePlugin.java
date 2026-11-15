@@ -199,7 +199,9 @@ public class FileIntakePlugin extends Plugin {
 
     private static boolean isModelFile(String name) {
         String n = name.toLowerCase(Locale.ROOT);
-        return n.endsWith(".dxf") || n.endsWith(".glb") || n.endsWith(".obj") || n.endsWith(".stl");
+        return n.endsWith(".dxf") || n.endsWith(".glb") || n.endsWith(".obj") || n.endsWith(".stl")
+            // Georeferenced pictures: the image and its Micromine .grf position file.
+            || n.endsWith(".grf") || n.endsWith(".jpg") || n.endsWith(".jpeg") || n.endsWith(".png");
     }
 
     /** Opens the system folder picker; resolves with every supported file in the chosen folder. */

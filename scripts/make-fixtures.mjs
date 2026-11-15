@@ -171,4 +171,33 @@ writeFileSync(path.join(dir, 'ascii.stl'), [
   const bh = Buffer.alloc(8); bh.writeUInt32LE(bin.length, 0); bh.writeUInt32LE(0x004e4942, 4);
   writeFileSync(path.join(dir, 'model.glb'), Buffer.concat([head, jh, j, bh, bin]));
 }
+// 11. Georeferenced section picture: a PNG and a Micromine-style .grf placing it
+//     as a vertical sheet running east through the demo model. Synthetic.
+{
+  const { deflateSync, crc32 } = await import('node:zlib');
+  const W = 256, H = 256;
+  const raw = Buffer.alloc((W * 3 + 1) * H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const o = y * (W * 3 + 1) + 1 + x * 3;
+      const grid = x % 32 === 0 || y % 32 === 0;
+      // Three coloured bands dipping to the right, on white, with a grid.
+      const band = Math.floor((x * 0.6 + y) / 70) % 3;
+      const c = grid ? [40, 40, 40] : y < 20 + x * 0.2 ? [255, 255, 255] : [[250, 190, 120], [150, 220, 160], [240, 160, 220]][band];
+      raw[o] = c[0]; raw[o + 1] = c[1]; raw[o + 2] = c[2];
+    }
+  }
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(body) >>> 0);
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(W, 0); ihdr.writeUInt32BE(H, 4); ihdr[8] = 8; ihdr[9] = 2;
+  writeFileSync(path.join(dir, 'section.png'), Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0)),
+  ]));
+  writeFileSync(path.join(dir, 'section.grf'), ['654200.0', '7654400.0', '450.0', '1.5', '1.5', '1.0', '0.0', '0.0', '0.0', '0.0', '1.0',
+    '0.00 0.00 654200.0000000000 7654400.0000000000 450.0000000000 1', '256.00 256.00 654584.0000000000 7654400.0000000000 66.0000000000 1', ''].join('\r\n'));
+}
 console.log('fixtures written to', dir);

@@ -13,7 +13,7 @@
   "tab.diag": "Diagnostics",
   "tab.settings": "Settings",
   "empty.title": "Open a model",
-  "empty.hint": "DXF, GLB, OBJ or STL. You can pick several files or a whole folder. Files never leave the device.",
+  "empty.hint": "DXF, GLB, OBJ, STL and section images JPG / PNG with a .grf position file. You can pick several files or a whole folder. Files never leave the device.",
   "empty.open": "Open files",
   "empty.drop": "Drop files to open",
   "m.point": "Point",
@@ -210,7 +210,14 @@
   "tour.files.text": "Opened files are kept in the Recent list and reopen without internet.\nThe “i” icon shows a file's diagnostics: what was read, what was skipped and why.",
   "tour.done.title": "All set",
   "tour.done.text": "The demo model will now close.\nYou can run the tour again from Settings (the gear icon).",
-  "slice.byLine": "By line: tap a section line",
-  "slice.pickLine": "Tap the line to cut along",
-  "slice.notLine": "That is not a line. Tap a section line."
+  "slice.byLine": "By a section line or picture",
+  "slice.pickLine": "Tap a section line or a section picture",
+  "slice.notLine": "There is no section line or picture here.",
+  "img.layer": "Image",
+  "img.loaded": "Georeferenced images opened: {n}",
+  "img.loadedHidden": "Images opened: {n}. To spare memory, {m} of them are hidden: switch on the ones you need in the Layers tab.",
+  "img.noGrf": "Images without a .grf position file: {n}. They were skipped.",
+  "img.tiff": "TIFF files are not supported ({n}). Save them as JPG or PNG.",
+  "img.bad": "could not read the image or its .grf position file",
+  "img.tooBig": "the image is too large for this device"
 }

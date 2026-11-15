@@ -69,6 +69,14 @@ purple layers stay visible as well as white, yellow and cyan ones.
   section and ✕ to turn it off. Taps, labels and note pins only see what the
   section shows. Sections are remembered. It is done with GPU clip planes, so
   it costs nothing extra to draw.
+- **Section pictures**: a JPG or PNG with a Micromine `.grf` position file of
+  the same name (for example `sec1.jpg` + `sec1.grf`) is stood up in the model
+  exactly where the `.grf` says. Open both together, or open the folder. Each
+  picture appears in Layers as its own file with visibility and opacity; a tap
+  on it reads real X / Y / Z; the By-line section tool pointed at it cuts along
+  it and faces it. Pictures are decoded only while shown and at reduced size
+  (2048 px on phones, 4096 px on a PC); when many are opened at once only the
+  first eight start visible. TIFF, `.jgw` and `.tab` are not read.
 - **Tutorial**: offered on first start; it walks through the features on a
   built-in demo model and closes it afterwards. Switch it on or off, or run it
   again, in Settings (gear icon).
@@ -405,6 +413,9 @@ first contact with real hardware and real data.
   precision and is flagged in Diagnostics.
 - A section shows the slab of surfaces as they are; it does not draw a
   filled cut face or a cut outline.
+- Section pictures are not kept in the Recent list or in "open last set";
+  open them again from the folder. Very large scans (hundreds of megapixels)
+  may fail to decode on a phone and are reported.
 - Transparent layers are not depth-sorted per triangle.
 - Layer settings are keyed by file name and size; a re-export of the same size
   and name inherits them.

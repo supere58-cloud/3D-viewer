@@ -100,6 +100,13 @@ export async function initNative(hooks: NativeHooks): Promise<void> {
   }
 }
 
+/** Reads a whole native file into memory (pictures and their small georeference files). */
+export async function readNativeBlob(path: string): Promise<Blob> {
+  const parts: ArrayBuffer[] = [];
+  await readNativeFile(path, (buf) => { parts.push(buf); }, () => false);
+  return new Blob(parts);
+}
+
 /** Removes the temporary copies made for an incoming file. */
 export async function releaseNative(paths: string[]): Promise<void> {
   if (!isNative || paths.length === 0) return;
